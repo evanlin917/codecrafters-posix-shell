@@ -9,16 +9,22 @@ int main() {
     printf("$ ");
 
     // Wait for user input
-    char input[100];
-    char* userInput = fgets(input, 100, stdin);
+    const size_t bufSize = 512;
+    char input[bufSize];
+    char* userInput = fgets(input, bufSize, stdin);
 
     if (userInput == NULL) {
       break;
     }
 
     // Remove trailing newline only if it exists
-    if (input[strlen(input) - 1] == '\n') {
+    size_t inputLen = strlen(input);
+    if (inputLen > 0 && input[inputLen - 1] == '\n') {
       input[strlen(input) - 1] = '\0';
+    }
+
+    if (strcmp(input, "exit 0") == 0) {
+      break;
     }
     
     printf("%s: command not found\n", input);
