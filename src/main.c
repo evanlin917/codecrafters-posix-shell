@@ -73,9 +73,9 @@ void handle_type_cmd(const char *args) {
 
   while (cmd_name != NULL) {
     if (
-      (strcmp(args, "echo") == 0) ||
-      (strcmp(args, "exit") == 0) ||
-      (strcmp(args, "type") == 0)
+      (strcmp(cmd_name, "echo") == 0) ||
+      (strcmp(cmd_name, "exit") == 0) ||
+      (strcmp(cmd_name, "type") == 0)
     ) {
       printf("%s is a shell builtin\n", args);
     } else {
