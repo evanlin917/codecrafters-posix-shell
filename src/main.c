@@ -1,13 +1,15 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
+
+#define BUF_SIZE 512
 
 // Helper function to handle `echo` commands
 void handle_echo_cmd(const char *args) {
   if (args != NULL) {
     printf("%s\n", args);
-  }
-  else {
+  } else {
     printf("\n");
   }
 }
@@ -15,6 +17,33 @@ void handle_echo_cmd(const char *args) {
 // Helper function to handle `exit` commands
 int handle_exit_cmd(const char *args) {
   return (args != NULL) ? atoi(args) : 0;
+}
+
+// Helper function handle `type` commands
+void handle_type_cmd(const char *args) {
+  if (args == NULL || *args == '\0') {
+    printf("type: usage: type name [...]\n");
+    return;
+  }
+
+  if (
+    (strncmp(args, "echo", 5) == 0) ||
+    (strncmp(args, "exit", 5) == 0) ||
+    (strncmp(args, "type", 5) == 0)
+  ) {
+    printf("%s is a shell builtin\n", args);
+  } else {
+    printf("%s: not found\n", args);
+  }
+}
+
+// Helper function to trim leading spaces
+char* trim_leading_spaces(char* str) {
+  while (isspace((unsigned char) *str)) {
+    str++;
+  }
+
+  return str;
 }
 
 int main() {
@@ -26,9 +55,8 @@ int main() {
     printf("$ ");
 
     // Wait for user input
-    const size_t bufSize = 512;
-    char input[bufSize];
-    char* shellInput = fgets(input, bufSize, stdin);
+    char input[BUF_SIZE];
+    char* shellInput = fgets(input, BUF_SIZE, stdin);
 
     if (shellInput == NULL) {
       break;
@@ -40,12 +68,18 @@ int main() {
       input[inputLen - 1] = '\0';
     }
 
-    // Preserve input for error reporting
-    char inputCopy[bufSize];
-    strcpy(inputCopy, input);
+    // Trim leading spaces
+    char *trimmedInput = trim_leading_spaces(input);
+    if (*trimmedInput == '\0') {
+      continue;
+    }
 
-    // Extract command and args from input given to shell
-    char* args = strchr(input, ' ');
+    // Preserve input for error reporting
+    char inputCopy[BUF_SIZE];
+    strcpy(inputCopy, trimmedInput);
+
+    // Extract command and args
+    char* args = strchr(trimmedInput, ' ');
     if (args != NULL) {
       *args = '\0';
       args++;
@@ -55,16 +89,15 @@ int main() {
       }
     }
 
-    char* command = input;
-    if (command == NULL) {
-      continue;
-    }
+    char* command = trimmedInput;
     
-    if (strcmp(command, "exit") == 0) {
+    if (strncmp(command, "exit", 5) == 0) {
       status = handle_exit_cmd(args);
       break;
-    } else if (strcmp(command, "echo") == 0) {
+    } else if (strncmp(command, "echo", 5) == 0) {
       handle_echo_cmd(args);
+    } else if (strncmp(command, "type", 5) == 0) {
+      handle_type_cmd(args);
     } else {
       printf("%s: command not found\n", inputCopy);
     }
