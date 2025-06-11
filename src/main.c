@@ -120,6 +120,7 @@ char* find_exe_in_path(const char* exe) {
   return NULL;
 }
 
+// Helper function to fork process and execute external executables
 void execute_external_exe(const char* exePath, char* argv[]) {
   pid_t pid = fork();
 
@@ -135,6 +136,7 @@ void execute_external_exe(const char* exePath, char* argv[]) {
   }
 }
 
+// Helper function to extract list of executable inputs
 char** split_args(const char* command, const char* args) {
   char** argv = malloc(MAX_ARGS * sizeof(char*));
   if (argv == NULL) {
@@ -183,6 +185,7 @@ char** split_args(const char* command, const char* args) {
   return argv;
 }
 
+// Helper function to free arguments given as executable input
 void free_argv(char** argv) {
   if (argv == NULL) {
     return;
