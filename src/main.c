@@ -5,15 +5,9 @@
 #include <unistd.h>
 
 #define BUF_SIZE 512
-#define PATH_LENGTH 1024
-
-typedef struct {
-  int found;
-  char path[PATH_LENGTH];
-} CommandResult;
 
 // Helper function to handle `echo` commands
-void handle_echo_cmd(const char *args) {
+void handle_echo_cmd(const char* args) {
   if (args != NULL) {
     printf("%s\n", args);
   } else {
@@ -22,73 +16,62 @@ void handle_echo_cmd(const char *args) {
 }
 
 // Helper function to handle `exit` commands
-int handle_exit_cmd(const char *args) {
+int handle_exit_cmd(const char* args) {
   return (args != NULL) ? atoi(args) : 0;
 }
 
-// Helper function to determine if command is found in PATH
-CommandResult find_cmd_in_path(const char* cmd) {
-  CommandResult result = {0, ""};
-
-  char* path_env = getenv("PATH");
-  if (!path_env) {
-    return result;
-  }
-
-  char* paths = strdup(path_env);
-  if (!paths) {
-    perror("strdup failed");
-    return result;
-  }
-
-  char* dir = strtok(paths, ":");
-  while (dir != NULL) {
-    snprintf(result.path, sizeof(result.path), "%s/%s", dir, cmd);
-
-    if (access(result.path, X_OK) == 0) {
-      result.found = 1;
-      break;
-    }
-    dir = strtok(NULL, ":");
-  }
-
-  free(paths);
-  return result;
-}
-
 // Helper function handle `type` commands
-void handle_type_cmd(const char *args) {
+void handle_type_cmd(const char* args) {
   if (args == NULL || *args == '\0') {
     printf("type: usage: type name [...]\n");
     return;
   }
 
-  char* args_copy = strdup(args);
-  if (!args_copy) {
-    perror("strdup failed");
+  if (
+    (strcmp(args, "echo") == 0) ||
+    (strcmp(args, "exit") == 0) ||
+    (strcmp(args, "type") == 0)
+  ) {
+    printf("%s is a shell builtin\n", args);
     return;
   }
 
-  char* cmd_name = strtok(args_copy, " ");
+  char* pathEnv = getenv("PATH");
+  if (pathEnv == NULL) {
+    printf("%s: not found\n", args);
+    return;
+  }
+  
+  char* pathCopy = malloc(strlen(pathEnv) + 1);
+  if (pathCopy == NULL) {
+    printf("%s: not found\n", args);
+    return;
+  }
+  strcpy(pathCopy, pathEnv);
 
-  while (cmd_name != NULL) {
-    if (
-      (strcmp(cmd_name, "echo") == 0) ||
-      (strcmp(cmd_name, "exit") == 0) ||
-      (strcmp(cmd_name, "type") == 0)
-    ) {
-      printf("%s is a shell builtin\n", args);
-    } else {
-      CommandResult result = find_cmd_in_path(cmd_name);
-      if (result.found) {
-        printf("%s is %s\n", cmd_name, result.path);
-      } else {
-        printf("%s: not found\n", cmd_name);
+  char* dir = strtok(pathCopy, ":");
+  while (dir != NULL) {
+    char fullPath[BUF_SIZE];
+    int ret = snprintf(fullPath, sizeof(fullPath), "%s/%s", dir, args);
+
+    if (ret >= sizeof(fullPath)) {
+      dir = strtok(NULL, ":");
+      continue;
+    }
+
+    if (access(fullPath, F_OK) == 0) {
+      if (access(fullPath, X_OK) == 0) {
+        printf("%s is %s\n", args, fullPath);
+        free(pathCopy);
+        return;
       }
     }
-    cmd_name = strtok(NULL, " ");
+
+    dir = strtok(NULL, ":");
   }
-  free(args_copy);
+
+  printf("%s: not found\n", args);
+  free(pathCopy);
 }
 
 // Helper function to trim leading spaces
