@@ -2,8 +2,15 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <unistd.h>
 
 #define BUF_SIZE 512
+#define PATH_LENGTH 1024
+
+typedef struct {
+  int found;
+  char path[PATH_LENGTH];
+} CommandResult;
 
 // Helper function to handle `echo` commands
 void handle_echo_cmd(const char *args) {
@@ -19,6 +26,36 @@ int handle_exit_cmd(const char *args) {
   return (args != NULL) ? atoi(args) : 0;
 }
 
+// Helper function to determine if command is found in PATH
+CommandResult find_cmd_in_path(const char* cmd) {
+  CommandResult result = {0, ""};
+
+  char* path_env = getenv("PATH");
+  if (!path_env) {
+    return result;
+  }
+
+  char* paths = strdup(path_env);
+  if (!paths) {
+    perror("strdup failed");
+    return result;
+  }
+
+  char* dir = strtok(paths, ":");
+  while (dir != NULL) {
+    snprintf(result.path, sizeof(result.path), "%s/%s", dir, cmd);
+
+    if (access(result.path, X_OK) == 0) {
+      result.found = 1;
+      break;
+    }
+    dir = strtok(NULL, ":");
+  }
+
+  free(paths);
+  return result;
+}
+
 // Helper function handle `type` commands
 void handle_type_cmd(const char *args) {
   if (args == NULL || *args == '\0') {
@@ -26,15 +63,32 @@ void handle_type_cmd(const char *args) {
     return;
   }
 
-  if (
-    (strncmp(args, "echo", 5) == 0) ||
-    (strncmp(args, "exit", 5) == 0) ||
-    (strncmp(args, "type", 5) == 0)
-  ) {
-    printf("%s is a shell builtin\n", args);
-  } else {
-    printf("%s: not found\n", args);
+  char* args_copy = strdup(args);
+  if (!args_copy) {
+    perror("strdup failed");
+    return;
   }
+
+  char* cmd_name = strtok(args_copy, " ");
+
+  while (cmd_name != NULL) {
+    if (
+      (strcmp(args, "echo") == 0) ||
+      (strcmp(args, "exit") == 0) ||
+      (strcmp(args, "type") == 0)
+    ) {
+      printf("%s is a shell builtin\n", args);
+    } else {
+      CommandResult result = find_cmd_in_path(cmd_name);
+      if (result.found) {
+        printf("%s is %s\n", cmd_name, result.path);
+      } else {
+        printf("%s: not found\n", cmd_name);
+      }
+    }
+    cmd_name = strtok(NULL, " ");
+  }
+  free(args_copy);
 }
 
 // Helper function to trim leading spaces
@@ -59,6 +113,7 @@ int main() {
     char* shellInput = fgets(input, BUF_SIZE, stdin);
 
     if (shellInput == NULL) {
+      printf("\n");
       break;
     }
 
@@ -69,17 +124,20 @@ int main() {
     }
 
     // Trim leading spaces
-    char *trimmedInput = trim_leading_spaces(input);
+    char* trimmedInput = trim_leading_spaces(input);
     if (*trimmedInput == '\0') {
       continue;
     }
 
     // Preserve input for error reporting
     char inputCopy[BUF_SIZE];
-    strcpy(inputCopy, trimmedInput);
+    strncpy(inputCopy, trimmedInput, BUF_SIZE - 1);
+    inputCopy[BUF_SIZE - 1] = '\0';
 
     // Extract command and args
     char* args = strchr(trimmedInput, ' ');
+    char* command;
+
     if (args != NULL) {
       *args = '\0';
       args++;
@@ -87,16 +145,17 @@ int main() {
       while (*args == ' ') {
         args++;
       }
+      command = trimmedInput;
+    } else {
+      command = trimmedInput;
     }
-
-    char* command = trimmedInput;
     
-    if (strncmp(command, "exit", 5) == 0) {
+    if (strcmp(command, "exit") == 0) {
       status = handle_exit_cmd(args);
       break;
-    } else if (strncmp(command, "echo", 5) == 0) {
+    } else if (strcmp(command, "echo") == 0) {
       handle_echo_cmd(args);
-    } else if (strncmp(command, "type", 5) == 0) {
+    } else if (strcmp(command, "type") == 0) {
       handle_type_cmd(args);
     } else {
       printf("%s: command not found\n", inputCopy);
