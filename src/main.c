@@ -1,5 +1,21 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+
+// Helper function to handle `echo` commands
+void handle_echo_cmd(const char *args) {
+  if (args != NULL) {
+    printf("%s\n", args);
+  }
+  else {
+    printf("\n");
+  }
+}
+
+// Helper function to handle `exit` commands
+int handle_exit_cmd(const char *args) {
+  return (args != NULL) ? atoi(args) : 0;
+}
 
 int main() {
   // Flush after every printf
@@ -55,19 +71,4 @@ int main() {
   }
 
   return status;
-}
-
-// Helper function to handle `echo` commands
-void handle_echo_cmd(const char *args) {
-  if (args != NULL) {
-    printf("%s\n", args);
-  }
-  else {
-    printf("\n");
-  }
-}
-
-// Helper function to handle `exit` commands
-int handle_exit_cmd(const char *args) {
-  return (args != NULL) ? atoi(args) : 0;
 }
