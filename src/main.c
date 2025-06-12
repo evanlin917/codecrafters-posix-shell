@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <limits.h>
 
 #define BUF_SIZE 512
 #define MAX_ARGS 64
@@ -22,7 +23,7 @@ int handle_exit_cmd(const char* args) {
   return (args != NULL) ? atoi(args) : 0;
 }
 
-// Helper function handle `type` commands
+// Helper function to handle `type` commands
 void handle_type_cmd(const char* args) {
   if (args == NULL || *args == '\0') {
     printf("type: usage: type name [...]\n");
@@ -32,7 +33,8 @@ void handle_type_cmd(const char* args) {
   if (
     (strcmp(args, "echo") == 0) ||
     (strcmp(args, "exit") == 0) ||
-    (strcmp(args, "type") == 0)
+    (strcmp(args, "type") == 0) ||
+    (strcmp(args, "pwd") == 0)
   ) {
     printf("%s is a shell builtin\n", args);
     return;
@@ -46,6 +48,7 @@ void handle_type_cmd(const char* args) {
   
   char* pathCopy = malloc(strlen(pathEnv) + 1);
   if (pathCopy == NULL) {
+    fprintf(stderr, "type: memory allocation failed for PATH processing\n");
     printf("%s: not found\n", args);
     return;
   }
@@ -74,6 +77,28 @@ void handle_type_cmd(const char* args) {
   free(pathCopy);
 }
 
+// Helper function to handle `pwd` commands
+char* handle_pwd_cmd() {
+  char* buffer;
+  char* curr_dir;
+
+  buffer = (char*)malloc(PATH_MAX);
+  if (buffer == NULL) {
+    fprintf(stderr, "pwd: memory allocation failed for path buffer\n");
+    return NULL;
+  }
+
+  curr_dir = getcwd(buffer, PATH_MAX);
+  if (curr_dir == NULL) {
+    perror("pwd: getcwd failed");
+    free(buffer);
+    return NULL;
+  }
+
+  free(buffer);
+  return curr_dir;
+}
+
 // Helper function to trim leading spaces
 char* trim_leading_spaces(char* str) {
   while (isspace((unsigned char) *str)) {
@@ -92,6 +117,7 @@ char* find_exe_in_path(const char* exe) {
 
   char* pathCopy = malloc(strlen(pathEnv) + 1);
   if (pathCopy == NULL) {
+    fprintf(stderr, "shell: memory allocation failed for PATH processing\n");
     return NULL;
   }
   strcpy(pathCopy, pathEnv);
@@ -132,7 +158,7 @@ void execute_external_exe(const char* exePath, char* argv[]) {
     int status;
     wait(&status);
   } else {
-    perror("Fork failed");
+    perror("fork failed");
   }
 }
 
@@ -140,12 +166,14 @@ void execute_external_exe(const char* exePath, char* argv[]) {
 char** split_args(const char* command, const char* args) {
   char** argv = malloc(MAX_ARGS * sizeof(char*));
   if (argv == NULL) {
+    fprintf(stderr, "shell: memory allocation failed for argument parsing\n");
     return NULL;
   }
 
   int i = 0;
   argv[i] = command;
   if (argv[i] == NULL) {
+    fprintf(stderr, "shell: given command is NULL\n");
     free(argv);
     return NULL;
   }
@@ -154,6 +182,7 @@ char** split_args(const char* command, const char* args) {
   if (args != NULL && *args != '\0') {
     char* argsCopy = malloc(strlen(args) + 1);
     if (argsCopy == NULL) {
+      fprintf(stderr, "shell: memory allocation failed for arguments copy\n");
       free(argv[0]);
       free(argv);
       return NULL;
@@ -165,6 +194,7 @@ char** split_args(const char* command, const char* args) {
       if (*token != '\0') {
         argv[i] = strdup(token);
         if (argv[i] == NULL) {
+          fprintf(stderr, "shell: parsed argument is NULL\n");
           for (int j = 1; j < i; j++) {
             free(argv[j]);
           }
@@ -262,6 +292,14 @@ int main() {
       handle_echo_cmd(args);
     } else if (strcmp(command, "type") == 0) {
       handle_type_cmd(args);
+    } else if (strcmp(command, "pwd") == 0) {
+      char* pwd = handle_pwd_cmd();
+      if (pwd != NULL) {
+        printf("%s\n", pwd);
+        free(pwd);
+      } else {
+        printf("pwd could not retrieve current working directory\n");
+      }
     } else {
       char* exePath = find_exe_in_path(command);
       if (exePath != NULL) {
