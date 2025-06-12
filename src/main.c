@@ -34,7 +34,8 @@ void handle_type_cmd(const char* args) {
     (strcmp(args, "echo") == 0) ||
     (strcmp(args, "exit") == 0) ||
     (strcmp(args, "type") == 0) ||
-    (strcmp(args, "pwd") == 0)
+    (strcmp(args, "pwd") == 0) ||
+    (strcmp(args, "cd") == 0)
   ) {
     printf("%s is a shell builtin\n", args);
     return;
@@ -79,16 +80,13 @@ void handle_type_cmd(const char* args) {
 
 // Helper function to handle `pwd` commands
 char* handle_pwd_cmd() {
-  char* buffer;
-  char* curr_dir;
-
-  buffer = (char*)malloc(PATH_MAX);
+  char* buffer = (char*)malloc(PATH_MAX);
   if (buffer == NULL) {
     fprintf(stderr, "pwd: memory allocation failed for path buffer\n");
     return NULL;
   }
 
-  curr_dir = getcwd(buffer, PATH_MAX);
+  char* curr_dir = getcwd(buffer, PATH_MAX);
   if (curr_dir == NULL) {
     perror("pwd: getcwd failed");
     free(buffer);
@@ -97,6 +95,25 @@ char* handle_pwd_cmd() {
 
   free(buffer);
   return curr_dir;
+}
+
+// Helper function to handle `cd` commands
+void handle_cd_cmd(const char* path) {
+  const char* target_path;
+
+  if (path == NULL || *path == '\0') {
+    target_path = getenv("HOME");
+    if (target_path == NULL) {
+      fprintf(stderr, "cd: HOME environment variable not set\n");
+      return;
+    }
+  } else {
+    target_path = path;
+  }
+
+  if (chdir(target_path) != 0) {
+    perror("cd failed");
+  }
 }
 
 // Helper function to trim leading spaces
@@ -299,6 +316,8 @@ int main() {
       } else {
         printf("pwd could not retrieve current working directory\n");
       }
+    } else if (strcmp(command, "cd") == 0) {
+      handle_cd_cmd(args);
     } else {
       char* exePath = find_exe_in_path(command);
       if (exePath != NULL) {
