@@ -296,7 +296,7 @@ int main() {
       char* pwd = handle_pwd_cmd();
       if (pwd != NULL) {
         printf("%s\n", pwd);
-        free(pwd);
+        // free(pwd);
       } else {
         printf("pwd could not retrieve current working directory\n");
       }
