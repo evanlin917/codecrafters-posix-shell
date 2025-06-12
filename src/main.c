@@ -112,7 +112,7 @@ void handle_cd_cmd(const char* path) {
   }
 
   if (chdir(target_path) != 0) {
-    perror("cd failed");
+    printf("cd: %s: No such file or directory\n", target_path);
   }
 }
 
