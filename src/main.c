@@ -28,7 +28,23 @@ void handle_echo_cmd(const char* args) {
         return;
       }
     }
-    printf("%s\n", args);
+    
+    char* args_copy = strdup(args);
+    char* token = strtok(args_copy, " ");
+    int first = 1;
+    while (token != NULL) {
+      if (*token != '\0') {
+        if (!first) {
+          printf(" ");
+        }
+
+        printf("%s", token);
+        first = 0;
+      }
+      token = strtok(NULL, " ");
+    }
+    printf("\n");
+    free(args_copy);
   } else {
     printf("\n");
   }
