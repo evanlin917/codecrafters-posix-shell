@@ -11,43 +11,50 @@
 
 // Helper function to handle `echo` commands
 void handle_echo_cmd(const char* args) {
-  if (args != NULL) {
-    int args_len = strlen(args);
-    if (args[0] == '\'' && args[args_len - 1] == '\'' && args_len > 1) {
-      if (args_len > 2) {
-        int start = 1, end = args_len - 2;
-        int len = end - start + 1;
-
-        char parsed_args[len + 1];
-        memcpy(parsed_args, args + 1, len);
-        parsed_args[len] = '\0';
-        printf("%s\n", parsed_args);
-        return;
-      } else {
-        printf("\n");
-        return;
-      }
-    }
-    
-    char* args_copy = strdup(args);
-    char* token = strtok(args_copy, " ");
-    int first = 1;
-    while (token != NULL) {
-      if (*token != '\0') {
-        if (!first) {
-          printf(" ");
-        }
-
-        printf("%s", token);
-        first = 0;
-      }
-      token = strtok(NULL, " ");
-    }
+  if (args == NULL) {
     printf("\n");
-    free(args_copy);
-  } else {
-    printf("\n");
+    return;
   }
+
+  int len = strlen(args);
+  int i = 0;
+  int first_arg = 1;
+
+  while (i < len) {
+    while (i < len && args[i] == ' ') {
+      i++;
+    }
+
+    if (i >= len) {
+      break;
+    }
+
+    if (!first_arg) {
+      printf(" ");
+    }
+    first_arg = 0;
+
+    if (args[i] == '\'') {
+      i++;
+
+      while (i < len) {
+        if (args[i] == '\'') {
+          i++;
+          break;
+        } else {
+          printf("%c", args[i]);
+          i++;
+        }
+      }
+    } else {
+      while (i < len && args[i] != ' ') {
+        printf("%c", args[i]);
+        i++;
+      }
+    }
+  }
+
+  printf("\n");
 }
 
 // Helper function to handle `exit` commands
