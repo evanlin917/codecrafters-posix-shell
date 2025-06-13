@@ -101,12 +101,22 @@ char* handle_pwd_cmd() {
 void handle_cd_cmd(const char* path) {
   const char* target_path;
 
-  if (path == NULL || *path == '\0') {
+  if (path == NULL || *path == '\0' || strcmp(path, "~") == 0) {
     target_path = getenv("HOME");
     if (target_path == NULL) {
       fprintf(stderr, "cd: HOME environment variable not set\n");
       return;
     }
+  } else if (*path == '~') {
+    const char* home = getenv("HOME");
+    if (home == NULL) {
+      fprintf(stderr, "cd: HOME environment variable not set\n");
+      return;
+    }
+
+    char expanded_path[PATH_MAX];
+    snprintf(expanded_path, sizeof(expanded_path), "%s%s", home, path + 1);
+    target_path = expanded_path;
   } else {
     target_path = path;
   }
