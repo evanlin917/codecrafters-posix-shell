@@ -12,6 +12,22 @@
 // Helper function to handle `echo` commands
 void handle_echo_cmd(const char* args) {
   if (args != NULL) {
+    int args_len = strlen(args);
+    if (args[0] == '\'' && args[args_len - 1] == '\'' && args_len > 1) {
+      if (args_len > 2) {
+        int start = 1, end = args_len - 2;
+        int len = end - start + 1;
+
+        char parsed_args[len + 1];
+        memcpy(parsed_args, args + 1, len);
+        parsed_args[len] = '\0';
+        printf("%s\n", parsed_args);
+        return;
+      } else {
+        printf("\n");
+        return;
+      }
+    }
     printf("%s\n", args);
   } else {
     printf("\n");
@@ -86,15 +102,13 @@ char* handle_pwd_cmd() {
     return NULL;
   }
 
-  char* curr_dir = getcwd(buffer, PATH_MAX);
-  if (curr_dir == NULL) {
+  if (getcwd(buffer, PATH_MAX) == NULL) {
     perror("pwd: getcwd failed");
     free(buffer);
     return NULL;
   }
 
-  free(buffer);
-  return curr_dir;
+  return buffer;
 }
 
 // Helper function to handle `cd` commands
@@ -323,6 +337,7 @@ int main() {
       char* pwd = handle_pwd_cmd();
       if (pwd != NULL) {
         printf("%s\n", pwd);
+        free(pwd);
       } else {
         printf("pwd could not retrieve current working directory\n");
       }
