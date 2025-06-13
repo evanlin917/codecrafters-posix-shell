@@ -35,15 +35,16 @@ void handle_echo_cmd(const char* args) {
     first_arg = 0;
 
     while (i < len && args[i] != ' ') {
-      if (args[i] == '\'') {
+      if (args[i] == '\'' || args[i] == '"') {
+        char quote_char = args[i];
         i++;
 
-        while (i < len && args[i] != '\'') {
+        while (i < len && args[i] != quote_char) {
           printf("%c", args[i]);
           i++;
         }
 
-        if (i < len && args[i] == '\'') {
+        if (i < len && args[i] == quote_char) {
           i++;
         }
       } else {
@@ -234,7 +235,7 @@ char** split_args(const char* command, const char* args) {
   }
 
   int argc = 0;
-  argv[argc] = command;
+  argv[argc] = strdup(command);
   if (argv[argc] == NULL) {
     fprintf(stderr, "shell: given command is NULL\n");
     free(argv);
@@ -259,14 +260,15 @@ char** split_args(const char* command, const char* args) {
       int arg_len = 0;
 
       while (i < len && args[i] != ' ' && arg_len < BUF_SIZE - 1) {
-        if (args[i] == '\'') {
+        if (args[i] == '\'' || args[i] == '"') {
+          char quote_char = args[i];
           i++;
 
-          while (i < len && args[i] != '\'' && arg_len < BUF_SIZE - 1) {
+          while (i < len && args[i] != quote_char && arg_len < BUF_SIZE - 1) {
             arg_buffer[arg_len++] = args[i];
             i++;
           }
-          if (i < len && args[i] == '\'') {
+          if (i < len && args[i] == quote_char) {
             i++;
           }
         } else {
@@ -278,7 +280,7 @@ char** split_args(const char* command, const char* args) {
       arg_buffer[arg_len] = '\0';
       argv[argc] = strdup(arg_buffer);
       if (argv[argc] == NULL) {
-        fprintf(stderr, "shell: memory allocation failed for argument\n");
+        fprintf(stderr, "shell: argument buller is null\n");
         for (int j = 0; j < argc; j++) {
           free(argv[j]);
         }
