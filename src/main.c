@@ -34,20 +34,19 @@ void handle_echo_cmd(const char* args) {
     }
     first_arg = 0;
 
-    if (args[i] == '\'') {
-      i++;
+    while (i < len && args[i] != ' ') {
+      if (args[i] == '\'') {
+        i++;
 
-      while (i < len) {
-        if (args[i] == '\'') {
-          i++;
-          break;
-        } else {
+        while (i < len && args[i] != '\'') {
           printf("%c", args[i]);
           i++;
         }
-      }
-    } else {
-      while (i < len && args[i] != ' ') {
+
+        if (i < len && args[i] == '\'') {
+          i++;
+        }
+      } else {
         printf("%c", args[i]);
         i++;
       }
