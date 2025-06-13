@@ -233,47 +233,63 @@ char** split_args(const char* command, const char* args) {
     return NULL;
   }
 
-  int i = 0;
-  argv[i] = command;
-  if (argv[i] == NULL) {
+  int argc = 0;
+  argv[argc] = command;
+  if (argv[argc] == NULL) {
     fprintf(stderr, "shell: given command is NULL\n");
     free(argv);
     return NULL;
   }
-  i++;
+  argc++;
 
   if (args != NULL && *args != '\0') {
-    char* argsCopy = malloc(strlen(args) + 1);
-    if (argsCopy == NULL) {
-      fprintf(stderr, "shell: memory allocation failed for arguments copy\n");
-      free(argv[0]);
-      free(argv);
-      return NULL;
-    }
-    strcpy(argsCopy, args);
+    int len = strlen(args);
+    int i = 0;
 
-    char* token = strtok(argsCopy, " ");
-    while (token != NULL && i < MAX_ARGS - 1) {
-      if (*token != '\0') {
-        argv[i] = strdup(token);
-        if (argv[i] == NULL) {
-          fprintf(stderr, "shell: parsed argument is NULL\n");
-          for (int j = 1; j < i; j++) {
-            free(argv[j]);
-          }
-
-          free(argv);
-          free(argsCopy);
-          return NULL;
-        }
+    while (i < len && argc < MAX_ARGS - 1) {
+      while (i < len && args[i] == ' ') {
         i++;
       }
-      token = strtok(NULL, " ");
+
+      if (i >= len) {
+        break;
+      }
+
+      char arg_buffer[BUF_SIZE];
+      int arg_len = 0;
+
+      while (i < len && args[i] != ' ' && arg_len < BUF_SIZE - 1) {
+        if (args[i] == '\'') {
+          i++;
+
+          while (i < len && args[i] != '\'' && arg_len < BUF_SIZE - 1) {
+            arg_buffer[arg_len++] = args[i];
+            i++;
+          }
+          if (i < len && args[i] == '\'') {
+            i++;
+          }
+        } else {
+          arg_buffer[arg_len++] = args[i];
+          i++;
+        }
+      }
+
+      arg_buffer[arg_len] = '\0';
+      argv[argc] = strdup(arg_buffer);
+      if (argv[argc] == NULL) {
+        fprintf(stderr, "shell: memory allocation failed for argument\n");
+        for (int j = 0; j < argc; j++) {
+          free(argv[j]);
+        }
+        free(argv);
+        return NULL;
+      }
+      argc++;
     }
-    free(argsCopy);
   }
 
-  argv[i] = NULL;
+  argv[argc] = NULL;
 
   return argv;
 }
