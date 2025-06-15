@@ -103,8 +103,8 @@ int process_c_style_escape(const char* input, char* escaped_char, int* chars_con
         case '\\': *escaped_char = '\\'; break; // Escaping backslash itself
         case '"': *escaped_char = '"'; break;   // Escaping double quote
         case '\'': *escaped_char = '\''; break; // Escaping single quote
-        case '<span class="math-inline">'\: \*escaped\_char \= '</span>'; break;   // Escaping dollar sign
-        case '`': *escaped_char = '`'; break;   // Escaping backtick
+        case '$': *escaped_char = '$'; break;   // Escaping dollar sign
+        case '`': *escaped_char = '`'; break;   // Escaping backtick (this was also potentially problematic if it had similar artifacts)
         default: return 0; // Not a recognized C-style escape
     }
     return 1;
