@@ -88,7 +88,7 @@ char process_escape_sequence(char escaped_char, ParseState* state) {
 
 // Helper function to determine if character needs escaping in double quotes
 int needs_escape_in_double_quotes(char c) {
-  return (c == '"' || c == '\\' || c = '$' || c == '`' || c == '\n');
+  return (c == '"' || c == '\\' || c == '$' || c == '`' || c == '\n');
 }
 
 // Helper function to handle quote state transitions
