@@ -68,18 +68,27 @@ char process_escape_sequence(char escaped_char, ParseState* state) {
     case 'v':
       return '\v';
     case 'a':
-      return '\a';  
+      return '\a';
+    case 'r':
+      return '\r';    
     case '\\':
       return '\\';
     case '"':
       return '"';
     case '\'':
       return '\'';
+    case '0':
+      return '\0'; 
     case ' ':
       return ' ';
     default:
       return escaped_char;           
   }
+}
+
+// Helper function to determine if character needs escaping in double quotes
+int needs_escape_in_double_quotes(char c) {
+  return (c == '"' || c == '\\' || c = '$' || c == '`' || c == '\n');
 }
 
 // Helper function to handle quote state transitions
@@ -101,7 +110,7 @@ int should_break_argument(char current_char, ParseState* state) {
     return 0;
   }
 
-  return (current_char == ' ');
+  return (current_char == ' ' || current_char == '\t');
 }
 
 // Helper function to process single character and return result
@@ -118,10 +127,29 @@ CharResult process_character(const char* input, ParseState* state) {
     return result;
   }
 
-  if (current_char == '\\' && !state->in_single_quote) {
-    if (state->pos + 1 < input_len) {
-      char next_char = input[state->pos + 1];
-      if (next_char == ' ' || next_char == '\\' || next_char == '"' || next_char == '\'') {
+  if (current_char == '\\') {
+    if (state->pos + 1 >= input_len) {
+      result.processed_char = current_char;
+      result.should_add_char = 1;
+      result.advance_pos = 1;
+      return result;
+    }
+
+    char next_char = input[state->pos + 1];
+
+    if (state->in_single_quote) {
+      if (next_char == '\'') {
+        state->escape_next = 1;
+        result.advance_pos = 1;
+        return result;
+      } else {
+        result.processed_char = current_char;
+        result.should_add_char = 1;
+        result.advance_pos = 1;
+        return result;
+      }
+    } else if (state->in_double_quote) {
+      if (needs_escape_in_double_quotes(next_char) || next_char == '\\') {
         state->escape_next = 1;
         result.advance_pos = 1;
         return result;
@@ -132,8 +160,7 @@ CharResult process_character(const char* input, ParseState* state) {
         return result;
       }
     } else {
-      result.processed_char = current_char;
-      result.should_add_char = 1;
+      state->escape_next = 1;
       result.advance_pos = 1;
       return result;
     }
@@ -233,7 +260,8 @@ void handle_echo_cmd(const char* args) {
       current_arg->buffer[0] = '\0';
 
       while (state.pos + result.advance_pos < input_len && 
-             args[state.pos + result.advance_pos] == ' ') {
+             (args[state.pos + result.advance_pos] == ' ' ||
+              args[state.pos + result.advance_pos] == '\t')) {
         result.advance_pos++;
       }
     }
@@ -250,6 +278,10 @@ void handle_echo_cmd(const char* args) {
 
   printf("\n");
   free_arg_buffer(current_arg);
+
+  if (state.in_single_quote || state.in_double_quote) {
+    fprintf(stderr, "echo: unterminated quote\n");
+  }
 }
 
 // Helper function to handle `exit` commands
