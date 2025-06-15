@@ -81,9 +81,6 @@ void free_argv(char** argv) {
     free(argv);
 }
 
-// REMOVED process_c_style_escape and process_octal_escape
-// as their specific transformations are not desired for filenames here.
-
 // --- Core Parsing Function ---
 // This function will parse the entire input line into individual arguments,
 // handling quotes and backslash escapes according to the specific rules.
@@ -242,7 +239,6 @@ char** parse_arguments(const char* input_line) {
 }
 
 // Helper function to handle `echo` commands
-// Now takes char** argv instead of const char* args
 void handle_echo_cmd(char** argv) {
     // argv[0] is "echo", subsequent elements are the arguments to echo
     for (int i = 1; argv[i] != NULL; i++) {
@@ -284,24 +280,23 @@ void handle_type_cmd(char** argv) { // Now takes char** argv
         char* pathEnv = getenv("PATH");
         if (pathEnv == NULL) {
             printf("%s: not found\n", cmd_to_type);
-            continue; // Check next argument
+            continue;
         }
         
-        char* pathCopy = strdup(pathEnv); // Use strdup for convenience and safety
+        char* pathCopy = strdup(pathEnv);
         if (pathCopy == NULL) {
             perror("type: strdup failed for PATH");
-            printf("%s: not found\n", cmd_to_type); // Still print not found for this arg
-            continue; // Check next argument
+            printf("%s: not found\n", cmd_to_type);
+            continue;
         }
 
         char* dir = strtok(pathCopy, ":");
         int found = 0;
         while (dir != NULL) {
-            char fullPath[PATH_MAX]; // Use PATH_MAX for full path
+            char fullPath[PATH_MAX];
             int ret = snprintf(fullPath, sizeof(fullPath), "%s/%s", dir, cmd_to_type);
 
             if (ret >= sizeof(fullPath)) {
-                // Path too long, skip this dir
                 dir = strtok(NULL, ":");
                 continue;
             }
@@ -309,7 +304,7 @@ void handle_type_cmd(char** argv) { // Now takes char** argv
             if (access(fullPath, F_OK) == 0 && access(fullPath, X_OK) == 0) {
                 printf("%s is %s\n", cmd_to_type, fullPath);
                 found = 1;
-                break; // Found it, move to next cmd_to_type
+                break;
             }
             dir = strtok(NULL, ":");
         }
@@ -317,7 +312,7 @@ void handle_type_cmd(char** argv) { // Now takes char** argv
         if (!found) {
             printf("%s: not found\n", cmd_to_type);
         }
-        free(pathCopy); // Free the duplicated PATH string
+        free(pathCopy);
     }
 }
 
@@ -339,11 +334,11 @@ char* handle_pwd_cmd() {
 }
 
 // Helper function to handle `cd` commands
-void handle_cd_cmd(char** argv) { // Now takes char** argv
-    const char* path = argv[1]; // The first argument to cd
+void handle_cd_cmd(char** argv) {
+    const char* path = argv[1];
 
     const char* target_path;
-    char expanded_path[PATH_MAX]; // Buffer for expanded path
+    char expanded_path[PATH_MAX];
 
     if (path == NULL || *path == '\0' || strcmp(path, "~") == 0) {
         target_path = getenv("HOME");
@@ -357,7 +352,6 @@ void handle_cd_cmd(char** argv) { // Now takes char** argv
             fprintf(stderr, "cd: HOME environment variable not set\n");
             return;
         }
-        // Construct path: HOME + rest of path
         snprintf(expanded_path, sizeof(expanded_path), "%s%s", home, path + 1);
         target_path = expanded_path;
     } else {
@@ -369,21 +363,12 @@ void handle_cd_cmd(char** argv) { // Now takes char** argv
     }
 }
 
-// Helper function to trim leading spaces - NOT USED AFTER PARSE_ARGUMENTS
-// Kept for consistency if you have other uses, but parse_arguments handles this.
-char* trim_leading_spaces(char* str) {
-    while (isspace((unsigned char) *str)) {
-        str++;
-    }
-    return str;
-}
-
 // Helper function to find if executable exists in PATH
 char* find_exe_in_path(const char* exe) {
     // If it's an absolute or relative path (contains '/'), don't search PATH
     if (strchr(exe, '/') != NULL) {
         if (access(exe, F_OK) == 0 && access(exe, X_OK) == 0) {
-            return strdup(exe); // Return a duplicated string for consistency
+            return strdup(exe);
         }
         return NULL;
     }
@@ -425,14 +410,14 @@ char* find_exe_in_path(const char* exe) {
 void execute_external_exe(const char* exePath, char* argv[]) {
     pid_t pid = fork();
 
-    if (pid == 0) { // Child process
-        execv(exePath, argv); // argv is directly passed
-        perror("execv failed"); // execv only returns on error
-        exit(1); // Exit child process on execv failure
-    } else if (pid > 0) { // Parent process
+    if (pid == 0) {
+        execv(exePath, argv);
+        perror("execv failed");
+        exit(1);
+    } else if (pid > 0) {
         int status;
-        waitpid(pid, &status, 0); // Wait for the specific child
-    } else { // Fork failed
+        waitpid(pid, &status, 0);
+    } else {
         perror("fork failed");
     }
 }
@@ -449,7 +434,7 @@ int main() {
         char input[BUF_SIZE];
         char* shellInput = fgets(input, BUF_SIZE, stdin);
 
-        if (shellInput == NULL) { // EOF (Ctrl+D)
+        if (shellInput == NULL) {
             printf("\n");
             break;
         }
@@ -460,29 +445,24 @@ int main() {
             input[inputLen - 1] = '\0';
         }
 
-        // The trim_leading_spaces is no longer strictly necessary because
-        // parse_arguments handles initial whitespace, but can keep for safety
-        // if other parts of your shell might use raw 'input' string directly.
-        char* processedInput = input; // parse_arguments will handle leading/trailing spaces correctly
+        char* processedInput = input;
 
         // Parse the entire line into arguments
         char** parsed_argv = parse_arguments(processedInput); 
 
         // Handle parsing errors (e.g., unterminated quotes)
         if (parsed_argv == NULL) {
-            // Error message already printed by parse_arguments
             continue; 
         }
 
         // If no command was parsed (e.g., input was just whitespace or empty after parsing)
         if (parsed_argv[0] == NULL) {
-            free_argv(parsed_argv); // Free the array itself
+            free_argv(parsed_argv);
             continue;
         }
 
         const char* command = parsed_argv[0];
 
-        // Now all built-in commands receive parsed_argv directly
         if (strcmp(command, "exit") == 0) {
             status = handle_exit_cmd(parsed_argv);
             free_argv(parsed_argv);
@@ -502,17 +482,15 @@ int main() {
         } else if (strcmp(command, "cd") == 0) {
             handle_cd_cmd(parsed_argv);
         } else {
-            // For external commands, search PATH and execute
             char* exePath = find_exe_in_path(command);
             if (exePath != NULL) {
-                execute_external_exe(exePath, parsed_argv); // Pass the full parsed_argv
+                execute_external_exe(exePath, parsed_argv);
                 free(exePath);
             } else {
                 printf("%s: command not found\n", command);
             }
         }
         
-        // Free the parsed arguments for the current command
         free_argv(parsed_argv);
     }
 
