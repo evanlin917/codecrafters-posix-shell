@@ -104,8 +104,9 @@ int process_c_style_escape(const char* input, char* escaped_char, int* chars_con
         // Characters that retain their literal meaning but drop the backslash
         case '\\': *escaped_char = '\\'; break;
         case '"': *escaped_char = '"'; break;
-        case '$': *escaped_char = '$'; break;   // Backslash escapes dollar sign to become literal dollar sign
-        case '`': *escaped_char = '`'; break;   // Backslash escapes dollar sign to become literal dollar sign
+        case '$': *escaped_char = '$'; break;
+        case '`': *escaped_char = '`'; break;
+        // case '\'': *escaped_char = '\''; break; // THIS LINE IS REMOVED
         default:
             // If it's not a special C-style or Bash-like escape, the backslash is *not* consumed here.
             // The calling `parse_arguments` logic will then treat the backslash as literal,
@@ -139,8 +140,8 @@ int process_octal_escape(const char* input, char* escaped_char) {
 
 
 // --- Core Parsing Function ---
-// This function will replace the logic in your original split_args
-// and the echo command parsing.
+// This function will parse the entire input line into individual arguments,
+// handling quotes and backslash escapes.
 char** parse_arguments(const char* input_line) {
     char** argv = malloc(MAX_ARGS * sizeof(char*));
     if (argv == NULL) {
@@ -226,14 +227,14 @@ char** parse_arguments(const char* input_line) {
                 i++; // Advance past the backslash to the character it's escaping
                 if (input_line[i] == '\0') {
                     // Trailing backslash unquoted is literal (e.g., `cmd arg\`)
-                    // Or could be treated as an error, depends on shell strictness.
-                    // For this challenge, assume literal backslash.
                     if (add_char_to_buffer(current_arg_buffer, '\\') < 0) {
                         free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
                 } else {
                     // Non-quoted backslash escapes the next character.
                     // It preserves its literal value, effectively dropping the backslash.
+                    // This implies no C-style or octal/hex interpretation for unquoted backslashes
+                    // only direct literal interpretation of the next character.
                     if (add_char_to_buffer(current_arg_buffer, input_line[i]) < 0) {
                         free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
