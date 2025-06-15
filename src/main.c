@@ -4,642 +4,523 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <limits.h>
+#include <limits.h> // For PATH_MAX
 
 #define BUF_SIZE 512
 #define MAX_ARGS 64
 
+// Structure to hold parsing state (quoting)
 typedef struct {
-  int in_single_quote;
-  int in_double_quote;
-  int escape_next;
-  int pos;
+    int in_single_quote;
+    int in_double_quote;
 } ParseState;
 
+// Structure for dynamic argument buffer
 typedef struct {
-  char processed_char;
-  int should_add_char;
-  int should_break_arg;
-  int advance_pos;
-} CharResult;
-
-typedef struct {
-  char* buffer;
-  size_t capacity;
-  size_t length;
+    char* buffer;
+    size_t capacity;
+    size_t length;
 } ArgBuffer;
-
-// Helper function to initialize parsing state
-ParseState init_parse_state() {
-  ParseState state = {0};
-  return state;
-}
 
 // Helper function to initialize argument buffer
 ArgBuffer* init_arg_buffer() {
-  ArgBuffer* buf = malloc(sizeof(ArgBuffer));
-  if (!buf) {
-    return NULL;
-  }
-
-  buf->capacity = 64;
-  buf->length = 0;
-  buf->buffer = malloc(buf->capacity);
-  if (!buf->buffer) {
-    free(buf);
-    return NULL;
-  }
-  buf->buffer[0] = '\0';
-
-  return buf;
-}
-
-// Helper function to process escape sequences
-char process_escape_sequence(char escaped_char, ParseState* state) {
-  switch (escaped_char) {
-    case 'n':
-      return '\n';
-    case 't':
-      return '\t';
-    case 'b':
-      return '\b';  
-    case 'f':
-      return '\f';
-    case 'v':
-      return '\v';
-    case 'a':
-      return '\a';
-    case 'r':
-      return '\r';    
-    case '\\':
-      return '\\';
-    case '"':
-      return '"';
-    case '\'':
-      return '\'';
-    case '0':
-      return '\0'; 
-    case ' ':
-      return ' ';
-    default:
-      return escaped_char;           
-  }
-}
-
-// Helper function to determine if character needs escaping in double quotes
-int needs_escape_in_double_quotes(char c) {
-  return (c == '"' || c == '\\' || c == '$' || c == '`' || c == '\n');
-}
-
-// Helper function to handle quote state transitions
-void handle_quote_transition(char current_char, ParseState* state) {
-  if (state->escape_next) {
-    return;
-  }
-
-  if (current_char =='\'' && !state->in_double_quote) {
-    state->in_single_quote = !state->in_single_quote;
-  } else if (current_char == '"' && !state->in_single_quote) {
-    state->in_double_quote = !state->in_double_quote;
-  }
-}
-
-// Helper argument to determine if current character should break current argument
-int should_break_argument(char current_char, ParseState* state) {
-  if (state->in_single_quote || state->in_double_quote || state->escape_next) {
-    return 0;
-  }
-
-  return (current_char == ' ' || current_char == '\t');
-}
-
-// Helper function to process single character and return result
-CharResult process_character(const char* input, ParseState* state) {
-  CharResult result = {0};
-  char current_char = input[state->pos];
-  int input_len = strlen(input);
-
-  if (state->escape_next == 1) {
-    result.processed_char = process_escape_sequence(current_char, state);
-    result.should_add_char = 1;
-    result.advance_pos = 1;
-    state->escape_next = 0;
-    return result;
-  }
-
-  if (current_char == '\\') {
-    if (state->pos + 1 >= input_len) {
-      result.processed_char = current_char;
-      result.should_add_char = 1;
-      result.advance_pos = 1;
-      return result;
+    ArgBuffer* buf = malloc(sizeof(ArgBuffer));
+    if (!buf) {
+        perror("init_arg_buffer: malloc failed for ArgBuffer");
+        return NULL;
     }
 
-    char next_char = input[state->pos + 1];
-
-    if (state->in_single_quote) {
-      if (next_char == '\'') {
-        state->escape_next = 1;
-        result.advance_pos = 1;
-        return result;
-      } else {
-        result.processed_char = current_char;
-        result.should_add_char = 1;
-        result.advance_pos = 1;
-        return result;
-      }
-    } else if (state->in_double_quote) {
-      if (needs_escape_in_double_quotes(next_char) || next_char == '\\') {
-        state->escape_next = 1;
-        result.advance_pos = 1;
-        return result;
-      } else {
-        result.processed_char = current_char;
-        result.should_add_char = 1;
-        result.advance_pos = 1;
-        return result;
-      }
-    } else {
-      state->escape_next = 1;
-      result.advance_pos = 1;
-      return result;
+    buf->capacity = 64; // Initial capacity
+    buf->length = 0;
+    buf->buffer = malloc(buf->capacity);
+    if (!buf->buffer) {
+        perror("init_arg_buffer: malloc failed for buffer");
+        free(buf);
+        return NULL;
     }
-  }
+    buf->buffer[0] = '\0'; // Null-terminate an empty string
 
-  handle_quote_transition(current_char, state);
-  result.should_break_arg = should_break_argument(current_char, state);
-
-  if (!result.should_break_arg &&
-      !((current_char == '\'' || current_char == '"') &&
-      !state->escape_next)
-    ) {
-    result.processed_char = current_char;
-    result.should_add_char = 1;
-  }
-    
-  result.advance_pos = 1;
-  return result;
+    return buf;
 }
 
 // Helper function to add character to argument buffer with dynamic resizing
 int add_char_to_buffer(ArgBuffer* buf, char c) {
-  if (buf->length + 1 >= buf->capacity) {
-    size_t new_capacity = buf->capacity * 2;
-    char* new_buffer = realloc(buf->buffer, new_capacity);
-    if (!new_buffer) {
-      return -1;
+    if (buf->length + 1 >= buf->capacity) {
+        size_t new_capacity = buf->capacity * 2;
+        char* new_buffer = realloc(buf->buffer, new_capacity);
+        if (!new_buffer) {
+            perror("add_char_to_buffer: realloc failed");
+            return -1;
+        }
+        buf->buffer = new_buffer;
+        buf->capacity = new_capacity;
     }
-    buf->buffer = new_buffer;
-    buf->capacity = new_capacity;
-  }
 
-  buf->buffer[buf->length++] = c;
-  buf->buffer[buf->length] = '\0';
-  return 0;
+    buf->buffer[buf->length++] = c;
+    buf->buffer[buf->length] = '\0';
+    return 0;
 }
 
 // Helper function to free argument buffer
 void free_arg_buffer(ArgBuffer* buf) {
-  if (buf != NULL) {
-    free(buf->buffer);
-    free(buf);
-  }
+    if (buf != NULL) {
+        free(buf->buffer);
+        free(buf);
+    }
 }
 
-// Helper function to cleanup argv on error
-void cleanup_argv_on_error(char** argv, int argc) {
-  for (int i = 0; i < argc; i++) {
-    if (argv[i] != NULL) {
-      free(argv[i]);
+// Helper function to cleanup argv on error or after use
+void free_argv(char** argv) {
+    if (argv == NULL) {
+        return;
     }
-  }
 
-  free(argv);
+    for (int i = 0; argv[i] != NULL; i++) {
+        free(argv[i]);
+    }
+    free(argv);
+}
+
+
+// --- Core Parsing Function ---
+char** parse_arguments(const char* input_line) {
+    char** argv = malloc(MAX_ARGS * sizeof(char*));
+    if (argv == NULL) {
+        perror("parse_arguments: malloc failed for argv");
+        return NULL;
+    }
+    int argc = 0;
+
+    ParseState state = {0, 0}; // Initialize state: not in single or double quotes
+    ArgBuffer* current_arg_buffer = init_arg_buffer();
+    if (!current_arg_buffer) {
+        free(argv);
+        return NULL;
+    }
+
+    int i = 0; // Current position in input_line
+
+    // Skip initial whitespace
+    while (isspace((unsigned char)input_line[i])) {
+        i++;
+    }
+
+    while (input_line[i] != '\0') {
+        char current_char = input_line[i];
+
+        if (state.in_single_quote) {
+            if (current_char == '\'') {
+                state.in_single_quote = 0; // End single quote
+            } else {
+                // In single quotes, backslashes are literal characters.
+                // All characters are added as-is.
+                if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
+                    free_arg_buffer(current_arg_buffer);
+                    free_argv(argv); // Free partially allocated argv
+                    return NULL;
+                }
+            }
+            i++;
+        } else if (state.in_double_quote) {
+            if (current_char == '"') {
+                state.in_double_quote = 0; // End double quote
+            } else if (current_char == '\\') {
+                i++; // Advance to the character potentially being escaped
+                if (input_line[i] == '\0') {
+                    // Trailing backslash in double quotes is literal (or syntax error depending on strictness)
+                    // For now, treat as literal backslash if nothing follows.
+                    if (add_char_to_buffer(current_arg_buffer, '\\') < 0) {
+                        free_arg_buffer(current_arg_buffer);
+                        free_argv(argv);
+                        return NULL;
+                    }
+                } else {
+                    // Apply double-quote escape rules: \ preserves literal value of ", $, `, \, newline
+                    char escaped_char = input_line[i];
+                    if (escaped_char == '"' || escaped_char == '$' || escaped_char == '`' ||
+                        escaped_char == '\\' || escaped_char == '\n') {
+                        // The backslash is dropped, the character is added literally
+                        if (add_char_to_buffer(current_arg_buffer, escaped_char) < 0) {
+                            free_arg_buffer(current_arg_buffer);
+                            free_argv(argv);
+                            return NULL;
+                        }
+                    } else {
+                        // For other characters, the backslash is treated literally, followed by the char
+                        if (add_char_to_buffer(current_arg_buffer, '\\') < 0 ||
+                            add_char_to_buffer(current_arg_buffer, escaped_char) < 0) {
+                            free_arg_buffer(current_arg_buffer);
+                            free_argv(argv);
+                            return NULL;
+                        }
+                    }
+                }
+                i++; // Advance past the escaped character (or the literal backslash if nothing followed)
+            } else {
+                // Regular character in double quotes, add to buffer
+                if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
+                    free_arg_buffer(current_arg_buffer);
+                    free_argv(argv);
+                    return NULL;
+                }
+                i++;
+            }
+        } else { // Not in any quotes
+            if (current_char == '\\') {
+                i++; // Advance to the character being escaped
+                if (input_line[i] == '\0') {
+                    // Trailing backslash unquoted is literal (or syntax error)
+                    // Treat as literal backslash if nothing follows.
+                    if (add_char_to_buffer(current_arg_buffer, '\\') < 0) {
+                        free_arg_buffer(current_arg_buffer);
+                        free_argv(argv);
+                        return NULL;
+                    }
+                } else {
+                    // Unquoted backslash escapes the next character, always preserving its literal value
+                    if (add_char_to_buffer(current_arg_buffer, input_line[i]) < 0) {
+                        free_arg_buffer(current_arg_buffer);
+                        free_argv(argv);
+                        return NULL;
+                    }
+                }
+                i++; // Advance past the escaped character (or the literal backslash if nothing followed)
+            } else if (current_char == '\'') {
+                state.in_single_quote = 1; // Enter single quote
+                i++;
+            } else if (current_char == '"') {
+                state.in_double_quote = 1; // Enter double quote
+                i++;
+            } else if (isspace((unsigned char)current_char)) {
+                // Argument boundary: if buffer has content, add it as an argument
+                if (current_arg_buffer->length > 0) {
+                    if (argc >= MAX_ARGS - 1) { // Check for max arguments
+                        fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                        free_arg_buffer(current_arg_buffer);
+                        free_argv(argv);
+                        return NULL;
+                    }
+                    argv[argc] = strdup(current_arg_buffer->buffer);
+                    if (!argv[argc]) {
+                        perror("parse_arguments: strdup failed");
+                        free_arg_buffer(current_arg_buffer);
+                        free_argv(argv);
+                        return NULL;
+                    }
+                    argc++;
+                    current_arg_buffer->length = 0; // Reset buffer for next argument
+                    current_arg_buffer->buffer[0] = '\0';
+                }
+                // Skip subsequent whitespace
+                while (isspace((unsigned char)input_line[i])) {
+                    i++;
+                }
+            } else {
+                // Regular character, add to buffer
+                if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
+                    free_arg_buffer(current_arg_buffer);
+                    free_argv(argv);
+                    return NULL;
+                }
+                i++;
+            }
+        }
+    }
+
+    // After loop, add any remaining content in the buffer as the last argument
+    if (current_arg_buffer->length > 0) {
+        if (argc >= MAX_ARGS - 1) {
+            fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+            free_arg_buffer(current_arg_buffer);
+            free_argv(argv);
+            return NULL;
+        }
+        argv[argc] = strdup(current_arg_buffer->buffer);
+        if (!argv[argc]) {
+            perror("parse_arguments: strdup failed for final arg");
+            free_arg_buffer(current_arg_buffer);
+            free_argv(argv);
+            return NULL;
+        }
+        argc++;
+    }
+    
+    // Check for unterminated quotes at the end of the line
+    if (state.in_single_quote || state.in_double_quote) {
+        fprintf(stderr, "shell: unterminated quote\n");
+        free_arg_buffer(current_arg_buffer);
+        free_argv(argv);
+        return NULL; // Return NULL to indicate a parsing error
+    }
+
+    argv[argc] = NULL; // Null-terminate the argv array as required by execv
+    free_arg_buffer(current_arg_buffer);
+    return argv;
 }
 
 // Helper function to handle `echo` commands
-void handle_echo_cmd(const char* args) {
-  if (args == NULL) {
+void handle_echo_cmd(char** argv) {
+    // argv[0] is "echo", subsequent elements are the arguments to echo
+    for (int i = 1; argv[i] != NULL; i++) {
+        printf("%s%s", argv[i], (argv[i+1] != NULL) ? " " : "");
+    }
     printf("\n");
-    return;
-  }
-
-  ParseState state = init_parse_state();
-  int input_len = strlen(args);
-  int first_arg = 1;
-  ArgBuffer* current_arg = init_arg_buffer();
-
-  if (current_arg == NULL) {
-    printf("\n");
-    return;
-  }
-
-  while (state.pos < input_len && args[state.pos] == ' ') {
-    state.pos++;
-  }
-
-  while (state.pos < input_len) {
-    CharResult result = process_character(args, &state);
-
-    if (result.should_add_char == 1) {
-      if (add_char_to_buffer(current_arg, result.processed_char) < 0) {
-        free_arg_buffer(current_arg);
-        printf("\n");
-        return;
-      }
-    }
-
-    if (result.should_break_arg == 1 && current_arg->length > 0) {
-      if (!first_arg) {
-        printf(" ");
-      }
-      printf("%s", current_arg->buffer);
-      first_arg = 0;
-
-      current_arg->length = 0;
-      current_arg->buffer[0] = '\0';
-
-      while (state.pos + result.advance_pos < input_len && 
-             (args[state.pos + result.advance_pos] == ' ' ||
-              args[state.pos + result.advance_pos] == '\t')) {
-        result.advance_pos++;
-      }
-    }
-    
-    state.pos += result.advance_pos;
-  }
-
-  if (current_arg->length > 0) {
-    if (!first_arg) {
-      printf(" ");
-    }
-    printf("%s", current_arg->buffer);
-  }
-
-  printf("\n");
-  free_arg_buffer(current_arg);
-
-  if (state.in_single_quote || state.in_double_quote) {
-    fprintf(stderr, "echo: unterminated quote\n");
-  }
 }
 
 // Helper function to handle `exit` commands
-int handle_exit_cmd(const char* args) {
-  return (args != NULL) ? atoi(args) : 0;
+int handle_exit_cmd(char** argv) {
+    if (argv[1] != NULL) {
+        return atoi(argv[1]);
+    }
+    return 0;
 }
 
 // Helper function to handle `type` commands
-void handle_type_cmd(const char* args) {
-  if (args == NULL || *args == '\0') {
-    printf("type: usage: type name [...]\n");
-    return;
-  }
-
-  if (
-    (strcmp(args, "echo") == 0) ||
-    (strcmp(args, "exit") == 0) ||
-    (strcmp(args, "type") == 0) ||
-    (strcmp(args, "pwd") == 0) ||
-    (strcmp(args, "cd") == 0)
-  ) {
-    printf("%s is a shell builtin\n", args);
-    return;
-  }
-
-  char* pathEnv = getenv("PATH");
-  if (pathEnv == NULL) {
-    printf("%s: not found\n", args);
-    return;
-  }
-  
-  char* pathCopy = malloc(strlen(pathEnv) + 1);
-  if (pathCopy == NULL) {
-    fprintf(stderr, "type: memory allocation failed for PATH processing\n");
-    printf("%s: not found\n", args);
-    return;
-  }
-  strcpy(pathCopy, pathEnv);
-
-  char* dir = strtok(pathCopy, ":");
-  while (dir != NULL) {
-    char fullPath[BUF_SIZE];
-    int ret = snprintf(fullPath, sizeof(fullPath), "%s/%s", dir, args);
-
-    if (ret >= sizeof(fullPath)) {
-      dir = strtok(NULL, ":");
-      continue;
+void handle_type_cmd(char** argv) {
+    // argv[0] is "type", argv[1] onwards are commands to type
+    if (argv[1] == NULL || *argv[1] == '\0') {
+        printf("type: usage: type name [...]\n");
+        return;
     }
 
-    if (access(fullPath, F_OK) == 0 && access(fullPath, X_OK) == 0) {
-      printf("%s is %s\n", args, fullPath);
-      free(pathCopy);
-      return; 
+    for (int i = 1; argv[i] != NULL; i++) {
+        const char* cmd_to_type = argv[i];
+
+        if (
+            (strcmp(cmd_to_type, "echo") == 0) ||
+            (strcmp(cmd_to_type, "exit") == 0) ||
+            (strcmp(cmd_to_type, "type") == 0) ||
+            (strcmp(cmd_to_type, "pwd") == 0) ||
+            (strcmp(cmd_to_type, "cd") == 0)
+        ) {
+            printf("%s is a shell builtin\n", cmd_to_type);
+            continue; // Check next argument
+        }
+
+        char* pathEnv = getenv("PATH");
+        if (pathEnv == NULL) {
+            printf("%s: not found\n", cmd_to_type);
+            continue; // Check next argument
+        }
+        
+        char* pathCopy = strdup(pathEnv); // Use strdup for convenience and safety
+        if (pathCopy == NULL) {
+            perror("type: strdup failed for PATH");
+            printf("%s: not found\n", cmd_to_type); // Still print not found for this arg
+            continue; // Check next argument
+        }
+
+        char* dir = strtok(pathCopy, ":");
+        int found = 0;
+        while (dir != NULL) {
+            char fullPath[PATH_MAX]; // Use PATH_MAX for full path
+            int ret = snprintf(fullPath, sizeof(fullPath), "%s/%s", dir, cmd_to_type);
+
+            if (ret >= sizeof(fullPath)) {
+                // Path too long, skip this dir
+                dir = strtok(NULL, ":");
+                continue;
+            }
+
+            if (access(fullPath, F_OK) == 0 && access(fullPath, X_OK) == 0) {
+                printf("%s is %s\n", cmd_to_type, fullPath);
+                found = 1;
+                break; // Found it, move to next cmd_to_type
+            }
+            dir = strtok(NULL, ":");
+        }
+
+        if (!found) {
+            printf("%s: not found\n", cmd_to_type);
+        }
+        free(pathCopy); // Free the duplicated PATH string
     }
-
-    dir = strtok(NULL, ":");
-  }
-
-  printf("%s: not found\n", args);
-  free(pathCopy);
 }
+
 
 // Helper function to handle `pwd` commands
 char* handle_pwd_cmd() {
-  char* buffer = (char*)malloc(PATH_MAX);
-  if (buffer == NULL) {
-    fprintf(stderr, "pwd: memory allocation failed for path buffer\n");
-    return NULL;
-  }
+    char* buffer = (char*)malloc(PATH_MAX);
+    if (buffer == NULL) {
+        perror("pwd: malloc failed for path buffer");
+        return NULL;
+    }
 
-  if (getcwd(buffer, PATH_MAX) == NULL) {
-    perror("pwd: getcwd failed");
-    free(buffer);
-    return NULL;
-  }
-
-  return buffer;
+    if (getcwd(buffer, PATH_MAX) == NULL) {
+        perror("pwd: getcwd failed");
+        free(buffer);
+        return NULL;
+    }
+    return buffer;
 }
 
 // Helper function to handle `cd` commands
-void handle_cd_cmd(const char* path) {
-  const char* target_path;
+void handle_cd_cmd(char** argv) {
+    const char* path = argv[1]; // The first argument to cd
 
-  if (path == NULL || *path == '\0' || strcmp(path, "~") == 0) {
-    target_path = getenv("HOME");
-    if (target_path == NULL) {
-      fprintf(stderr, "cd: HOME environment variable not set\n");
-      return;
+    const char* target_path;
+    char expanded_path[PATH_MAX]; // Buffer for expanded path
+
+    if (path == NULL || *path == '\0' || strcmp(path, "~") == 0) {
+        target_path = getenv("HOME");
+        if (target_path == NULL) {
+            fprintf(stderr, "cd: HOME environment variable not set\n");
+            return;
+        }
+    } else if (*path == '~') {
+        const char* home = getenv("HOME");
+        if (home == NULL) {
+            fprintf(stderr, "cd: HOME environment variable not set\n");
+            return;
+        }
+        // Construct path: HOME + rest of path
+        snprintf(expanded_path, sizeof(expanded_path), "%s%s", home, path + 1);
+        target_path = expanded_path;
+    } else {
+        target_path = path;
     }
-  } else if (*path == '~') {
-    const char* home = getenv("HOME");
-    if (home == NULL) {
-      fprintf(stderr, "cd: HOME environment variable not set\n");
-      return;
+
+    if (chdir(target_path) != 0) {
+        printf("cd: %s: No such file or directory\n", target_path);
     }
-
-    char expanded_path[PATH_MAX];
-    snprintf(expanded_path, sizeof(expanded_path), "%s%s", home, path + 1);
-    target_path = expanded_path;
-  } else {
-    target_path = path;
-  }
-
-  if (chdir(target_path) != 0) {
-    printf("cd: %s: No such file or directory\n", target_path);
-  }
-}
-
-// Helper function to trim leading spaces
-char* trim_leading_spaces(char* str) {
-  while (isspace((unsigned char) *str)) {
-    str++;
-  }
-
-  return str;
 }
 
 // Helper function to find if executable exists in PATH
 char* find_exe_in_path(const char* exe) {
-  char* pathEnv = getenv("PATH");
-  if (pathEnv == NULL) {
-    return NULL;
-  }
-
-  char* pathCopy = malloc(strlen(pathEnv) + 1);
-  if (pathCopy == NULL) {
-    fprintf(stderr, "shell: memory allocation failed for PATH processing\n");
-    return NULL;
-  }
-  strcpy(pathCopy, pathEnv);
-
-  char* dir = strtok(pathCopy, ":");
-  while (dir != NULL) {
-    char fullPath[BUF_SIZE];
-    int ret = snprintf(fullPath, sizeof(fullPath), "%s/%s", dir, exe);
-
-    if (ret >= sizeof(fullPath)) {
-      dir = strtok(NULL, ":");
-      continue;
+    // If it's an absolute or relative path (contains '/'), don't search PATH
+    if (strchr(exe, '/') != NULL) {
+        if (access(exe, F_OK) == 0 && access(exe, X_OK) == 0) {
+            return strdup(exe); // Return a duplicated string for consistency
+        }
+        return NULL;
     }
 
-    if (access(fullPath, F_OK) == 0 && access(fullPath, X_OK) == 0) {
-      char* result = strdup(fullPath);
-      free(pathCopy);
-      return result;
+    char* pathEnv = getenv("PATH");
+    if (pathEnv == NULL) {
+        return NULL;
     }
 
+    char* pathCopy = strdup(pathEnv);
+    if (pathCopy == NULL) {
+        perror("find_exe_in_path: strdup failed for PATH");
+        return NULL;
+    }
 
-    dir = strtok(NULL, ":");
-  }
+    char* dir = strtok(pathCopy, ":");
+    while (dir != NULL) {
+        char fullPath[PATH_MAX];
+        int ret = snprintf(fullPath, sizeof(fullPath), "%s/%s", dir, exe);
 
-  free(pathCopy);
-  return NULL;
+        if (ret >= sizeof(fullPath)) {
+            dir = strtok(NULL, ":");
+            continue;
+        }
+
+        if (access(fullPath, F_OK) == 0 && access(fullPath, X_OK) == 0) {
+            char* result = strdup(fullPath);
+            free(pathCopy);
+            return result;
+        }
+        dir = strtok(NULL, ":");
+    }
+
+    free(pathCopy);
+    return NULL;
 }
 
 // Helper function to fork process and execute external executables
 void execute_external_exe(const char* exePath, char* argv[]) {
-  pid_t pid = fork();
+    pid_t pid = fork();
 
-  if (pid == 0) {
-    execv(exePath, argv);
-    perror("execv failed");
-    exit(1);
-  } else if (pid > 0) {
-    int status;
-    wait(&status);
-  } else {
-    perror("fork failed");
-  }
-}
-
-// Helper function to extract list of executable inputs
-char** split_args(const char* command, const char* args) {
-  char** argv = malloc(MAX_ARGS * sizeof(char*));
-  if (argv == NULL) {
-    fprintf(stderr, "shell: memory allocation failed for argument parsing\n");
-    return NULL;
-  }
-
-  int argc = 0;
-  argv[argc] = strdup(command);
-  if (argv[argc] == NULL) {
-    fprintf(stderr, "shell: given command is NULL\n");
-    free(argv);
-    return NULL;
-  }
-  argc++;
-
-  if (args != NULL && *args != '\0') {
-    ParseState state = init_parse_state();
-    ArgBuffer* current_arg = init_arg_buffer();
-
-    if (current_arg == NULL) {
-      cleanup_argv_on_error(argv, argc);
-      return NULL;
+    if (pid == 0) { // Child process
+        execv(exePath, argv); // argv is directly passed
+        perror("execv failed"); // execv only returns on error
+        exit(1); // Exit child process on execv failure
+    } else if (pid > 0) { // Parent process
+        int status;
+        waitpid(pid, &status, 0); // Wait for the specific child
+    } else { // Fork failed
+        perror("fork failed");
     }
-
-    int input_len = strlen(args);
-
-    while (state.pos < input_len && args[state.pos] == ' ') {
-      state.pos++;
-    }
-
-    while (state.pos < input_len && argc < MAX_ARGS - 1) {
-      CharResult result = process_character(args, &state);
-
-      if (result.should_add_char == 1) {
-        if (add_char_to_buffer(current_arg, result.processed_char) < 0) {
-          free_arg_buffer(current_arg);
-          cleanup_argv_on_error(argv, argc);
-          return NULL;
-        }
-      }
-
-      if (result.should_break_arg == 1 && current_arg->length > 0) {
-        argv[argc] = strdup(current_arg->buffer);
-        if (argv[argc] == NULL) {
-          free_arg_buffer(current_arg);
-          cleanup_argv_on_error(argv, argc);
-          return NULL;
-        }
-
-        argc++;
-        
-        current_arg->length = 0;
-        current_arg->buffer[0] = '\0';
-
-        while (state.pos + result.advance_pos < input_len && 
-               args[state.pos + result.advance_pos] == ' ') {
-          result.advance_pos++;
-        }
-      }
-
-      state.pos += result.advance_pos;
-    }
-
-    if (current_arg ->length > 0 && argc < MAX_ARGS - 1) {
-      argv[argc] = strdup(current_arg->buffer);
-      if (argv[argc] != NULL) {
-        argc++;
-      }
-    }
-
-    free_arg_buffer(current_arg);
-
-    if (state.in_single_quote == 1 || state.in_double_quote == 1) {
-      fprintf(stderr, "shell: unterminated quote in command line\n");
-    }
-  }
-
-  argv[argc] = NULL;
-
-  return argv;
-}
-
-// Helper function to free arguments given as executable input
-void free_argv(char** argv) {
-  if (argv == NULL) {
-    return;
-  }
-
-  for (int i = 1; argv[i] != NULL; i++) {
-    free(argv[i]);
-  }
-
-  free(argv);
 }
 
 int main() {
-  // Flush after every printf
-  setbuf(stdout, NULL);
-  int status = 0;
+    // Flush after every printf for immediate output in interactive mode
+    setbuf(stdout, NULL);
+    int status = 0;
 
-  while (1) {
-    printf("$ ");
+    while (1) {
+        printf("$ ");
 
-    // Wait for user input
-    char input[BUF_SIZE];
-    char* shellInput = fgets(input, BUF_SIZE, stdin);
+        // Wait for user input
+        char input[BUF_SIZE];
+        char* shellInput = fgets(input, BUF_SIZE, stdin);
 
-    if (shellInput == NULL) {
-      printf("\n");
-      break;
-    }
-
-    // Remove trailing newline only if it exists
-    size_t inputLen = strlen(input);
-    if (inputLen > 0 && input[inputLen - 1] == '\n') {
-      input[inputLen - 1] = '\0';
-    }
-
-    // Trim leading spaces
-    char* trimmedInput = trim_leading_spaces(input);
-    if (*trimmedInput == '\0') {
-      continue;
-    }
-
-    // Preserve input for error reporting
-    char inputCopy[BUF_SIZE];
-    strncpy(inputCopy, trimmedInput, BUF_SIZE - 1);
-    inputCopy[BUF_SIZE - 1] = '\0';
-
-    // Extract command and args
-    char* args = strchr(inputCopy, ' ');
-    char* command;
-
-    if (args != NULL) {
-      *args = '\0';
-      args++;
-
-      while (*args == ' ') {
-        args++;
-      }
-
-      if (*args == '\0') {
-        args = NULL;
-      }
-      command = inputCopy;
-    } else {
-      command = inputCopy;
-      args = NULL;
-    }
-    
-    char* exePath = find_exe_in_path(command);
-
-    if (strcmp(command, "exit") == 0) {
-      status = handle_exit_cmd(args);
-      break;
-    } else if (strcmp(command, "echo") == 0) {
-      handle_echo_cmd(args);
-    } else if (strcmp(command, "type") == 0) {
-      handle_type_cmd(args);
-    } else if (strcmp(command, "pwd") == 0) {
-      char* pwd = handle_pwd_cmd();
-      if (pwd != NULL) {
-        printf("%s\n", pwd);
-        free(pwd);
-      } else {
-        printf("pwd could not retrieve current working directory\n");
-      }
-    } else if (strcmp(command, "cd") == 0) {
-      handle_cd_cmd(args);
-    } else {
-      char* exePath = find_exe_in_path(command);
-      if (exePath != NULL) {
-        char** argv = split_args(command, args);
-        if (argv != NULL) {
-          execute_external_exe(exePath, argv);
-          free_argv(argv);
-        } else {
-          printf("Memory allocation failed\n");
+        if (shellInput == NULL) { // EOF (Ctrl+D)
+            printf("\n");
+            break;
         }
-        free(exePath);
-      } else {
-        printf("%s: command not found\n", inputCopy);
-      }
-    }
-  }
 
-  return status;
+        // Remove trailing newline
+        size_t inputLen = strlen(input);
+        if (inputLen > 0 && input[inputLen - 1] == '\n') {
+            input[inputLen - 1] = '\0';
+        }
+
+        // Skip command if input is empty after trimming, or only whitespace
+        if (strlen(input) == 0) {
+            continue;
+        }
+
+        // Parse the entire line into arguments
+        char** parsed_argv = parse_arguments(input); 
+
+        // Handle parsing errors (e.g., unterminated quotes)
+        if (parsed_argv == NULL) {
+            // Error message already printed by parse_arguments
+            continue; 
+        }
+
+        // If no command was parsed (e.g., input was just quotes that cancelled out, or empty after parsing)
+        if (parsed_argv[0] == NULL) {
+            free_argv(parsed_argv);
+            continue;
+        }
+
+        const char* command = parsed_argv[0];
+
+        if (strcmp(command, "exit") == 0) {
+            status = handle_exit_cmd(parsed_argv);
+            free_argv(parsed_argv);
+            break;
+        } else if (strcmp(command, "echo") == 0) {
+            handle_echo_cmd(parsed_argv);
+        } else if (strcmp(command, "type") == 0) {
+            handle_type_cmd(parsed_argv);
+        } else if (strcmp(command, "pwd") == 0) {
+            char* pwd = handle_pwd_cmd();
+            if (pwd != NULL) {
+                printf("%s\n", pwd);
+                free(pwd);
+            } else {
+                // Error message from handle_pwd_cmd, just print generic
+                printf("pwd: could not retrieve current working directory\n");
+            }
+        } else if (strcmp(command, "cd") == 0) {
+            handle_cd_cmd(parsed_argv);
+        } else {
+            char* exePath = find_exe_in_path(command);
+            if (exePath != NULL) {
+                execute_external_exe(exePath, parsed_argv); // Pass the full parsed_argv
+                free(exePath);
+            } else {
+                printf("%s: command not found\n", command);
+            }
+        }
+        
+        // Free the parsed arguments for the current command
+        free_argv(parsed_argv);
+    }
+
+    return status;
 }
