@@ -61,6 +61,14 @@ char process_escape_sequence(char escaped_char, ParseState* state) {
       return '\n';
     case 't':
       return '\t';
+    case 'b':
+      return '\b';  
+    case 'f':
+      return '\f';
+    case 'v':
+      return '\v';
+    case 'a':
+      return '\a';  
     case '\\':
       return '\\';
     case '"':
@@ -100,6 +108,7 @@ int should_break_argument(char current_char, ParseState* state) {
 CharResult process_character(const char* input, ParseState* state) {
   CharResult result = {0};
   char current_char = input[state->pos];
+  int input_len = strlen(input);
 
   if (state->escape_next == 1) {
     result.processed_char = process_escape_sequence(current_char, state);
@@ -110,20 +119,37 @@ CharResult process_character(const char* input, ParseState* state) {
   }
 
   if (current_char == '\\' && !state->in_single_quote) {
-    state->escape_next = 1;
-    result.advance_pos = 1;
-    return result;
+    if (state->pos + 1 < input_len) {
+      char next_char = input[state->pos + 1];
+      if (next_char == ' ' || next_char == '\\' || next_char == '"' || next_char == '\'') {
+        state->escape_next = 1;
+        result.advance_pos = 1;
+        return result;
+      } else {
+        result.processed_char = current_char;
+        result.should_add_char = 1;
+        result.advance_pos = 1;
+        return result;
+      }
+    } else {
+      result.processed_char = current_char;
+      result.should_add_char = 1;
+      result.advance_pos = 1;
+      return result;
+    }
   }
 
   handle_quote_transition(current_char, state);
   result.should_break_arg = should_break_argument(current_char, state);
 
-  if (!result.should_break_arg && 
-      !((current_char == '\'' || current_char =='"') && !state->escape_next)) {
-      result.processed_char = current_char;
-      result.should_add_char = 1;
+  if (!result.should_break_arg &&
+      !((current_char == '\'' || current_char == '"') &&
+      !state->escape_next)
+    ) {
+    result.processed_char = current_char;
+    result.should_add_char = 1;
   }
-
+    
   result.advance_pos = 1;
   return result;
 }
