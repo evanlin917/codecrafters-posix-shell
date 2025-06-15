@@ -60,7 +60,7 @@ char process_escape_sequence(char escaped_char, ParseState* state) {
     case 'n':
       return '\n';
     case 't':
-      return "\t";
+      return '\t';
     case '\\':
       return '\\';
     case '"':
