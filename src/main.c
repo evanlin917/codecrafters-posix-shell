@@ -81,6 +81,57 @@ void free_argv(char** argv) {
     free(argv);
 }
 
+// Helper to process C-style backslash escapes (like \n, \t)
+// Returns 0 if not a C-style escape, 1 if processed.
+// If processed, `*escaped_char` will hold the resulting character.
+// `*chars_consumed` will hold how many chars from `input` were processed (e.g., 2 for \n).
+int process_c_style_escape(const char* input, char* escaped_char, int* chars_consumed) {
+    if (input[0] == '\0') { // Need at least one character after backslash
+        return 0;
+    }
+
+    *chars_consumed = 2; // Default for \X where X is one char
+
+    switch (input[0]) {
+        case 'n': *escaped_char = '\n'; break;
+        case 't': *escaped_char = '\t'; break;
+        case 'b': *escaped_char = '\b'; break;
+        case 'f': *escaped_char = '\f'; break;
+        case 'v': *escaped_char = '\v'; break;
+        case 'a': *escaped_char = '\a'; break;
+        case 'r': *escaped_char = '\r'; break;
+        case '\\': *escaped_char = '\\'; break; // Escaping backslash itself
+        case '"': *escaped_char = '"'; break;   // Escaping double quote
+        case '\'': *escaped_char = '\''; break; // Escaping single quote
+        case '<span class="math-inline">'\: \*escaped\_char \= '</span>'; break;   // Escaping dollar sign
+        case '`': *escaped_char = '`'; break;   // Escaping backtick
+        default: return 0; // Not a recognized C-style escape
+    }
+    return 1;
+}
+
+// Helper to process octal escape sequences (e.g., \0, \00, \000, \123)
+// Returns number of characters consumed (including the '\'), or 0 if not a valid octal sequence.
+// If successful, `*escaped_char` will hold the resulting character.
+int process_octal_escape(const char* input, char* escaped_char) {
+    int val = 0;
+    int digits = 0;
+    int i = 0;
+
+    // Check for up to 3 octal digits
+    while (i < 3 && isdigit((unsigned char)input[i]) && input[i] >= '0' && input[i] <= '7') {
+        val = val * 8 + (input[i] - '0');
+        digits++;
+        i++;
+    }
+
+    if (digits > 0) {
+        *escaped_char = (char)val;
+        return digits + 1; // +1 for the leading backslash
+    }
+    return 0; // Not a valid octal sequence
+}
+
 
 // --- Core Parsing Function ---
 char** parse_arguments(const char* input_line) {
@@ -112,11 +163,10 @@ char** parse_arguments(const char* input_line) {
             if (current_char == '\'') {
                 state.in_single_quote = 0; // End single quote
             } else {
-                // In single quotes, backslashes are literal characters.
-                // All characters are added as-is.
+                // In single quotes, ALL characters are literal, including backslashes.
                 if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
                     free_arg_buffer(current_arg_buffer);
-                    free_argv(argv); // Free partially allocated argv
+                    free_argv(argv);
                     return NULL;
                 }
             }
@@ -124,67 +174,70 @@ char** parse_arguments(const char* input_line) {
         } else if (state.in_double_quote) {
             if (current_char == '"') {
                 state.in_double_quote = 0; // End double quote
+                i++;
             } else if (current_char == '\\') {
-                i++; // Advance to the character potentially being escaped
-                if (input_line[i] == '\0') {
-                    // Trailing backslash in double quotes is literal (or syntax error depending on strictness)
-                    // For now, treat as literal backslash if nothing follows.
-                    if (add_char_to_buffer(current_arg_buffer, '\\') < 0) {
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
+                char escaped_char_val;
+                int consumed_chars = 0;
+
+                // Try C-style escapes first (like \n, \t)
+                if (process_c_style_escape(&input_line[i+1], &escaped_char_val, &consumed_chars)) {
+                    if (add_char_to_buffer(current_arg_buffer, escaped_char_val) < 0) {
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
-                } else {
-                    // Apply double-quote escape rules: \ preserves literal value of ", $, `, \, newline
-                    char escaped_char = input_line[i];
-                    if (escaped_char == '"' || escaped_char == '$' || escaped_char == '`' ||
-                        escaped_char == '\\' || escaped_char == '\n') {
-                        // The backslash is dropped, the character is added literally
-                        if (add_char_to_buffer(current_arg_buffer, escaped_char) < 0) {
-                            free_arg_buffer(current_arg_buffer);
-                            free_argv(argv);
-                            return NULL;
+                    i += consumed_chars; // Advance past \ and the escaped char
+                }
+                // Then try octal escapes (like \033)
+                else if ((consumed_chars = process_octal_escape(&input_line[i+1], &escaped_char_val)) > 0) {
+                     if (add_char_to_buffer(current_arg_buffer, escaped_char_val) < 0) {
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                    }
+                    i += consumed_chars; // Advance past \ and the octal digits
+                }
+                // If not a recognized escape, the backslash itself is literal
+                else {
+                    if (add_char_to_buffer(current_arg_buffer, current_char) < 0) { // Add '\\'
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                    }
+                    i++; // Advance past the literal backslash
+                    // If a character follows, it's also literal
+                    if (input_line[i] != '\0') {
+                        if (add_char_to_buffer(current_arg_buffer, input_line[i]) < 0) {
+                            free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                         }
-                    } else {
-                        // For other characters, the backslash is treated literally, followed by the char
-                        if (add_char_to_buffer(current_arg_buffer, '\\') < 0 ||
-                            add_char_to_buffer(current_arg_buffer, escaped_char) < 0) {
-                            free_arg_buffer(current_arg_buffer);
-                            free_argv(argv);
-                            return NULL;
-                        }
+                        i++; // Advance past the literal character after backslash
                     }
                 }
-                i++; // Advance past the escaped character (or the literal backslash if nothing followed)
             } else {
                 // Regular character in double quotes, add to buffer
                 if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
-                    free_arg_buffer(current_arg_buffer);
-                    free_argv(argv);
-                    return NULL;
+                    free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                 }
                 i++;
             }
         } else { // Not in any quotes
             if (current_char == '\\') {
-                i++; // Advance to the character being escaped
+                char escaped_char_val;
+                int consumed_chars = 0;
+
+                // Try C-style escapes (often not processed unquoted by default shells,
+                // but if your "read more" implies it, here's where it goes)
+                // For typical shell, \n unquoted is 'n'
+                // Revert to simpler interpretation for unquoted \
+                
+                i++; // Advance past the backslash
                 if (input_line[i] == '\0') {
-                    // Trailing backslash unquoted is literal (or syntax error)
-                    // Treat as literal backslash if nothing follows.
+                    // Trailing backslash unquoted is literal
                     if (add_char_to_buffer(current_arg_buffer, '\\') < 0) {
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
                 } else {
-                    // Unquoted backslash escapes the next character, always preserving its literal value
+                    // Unquoted backslash escapes the next character.
+                    // This means the next character is added literally, dropping the '\'.
                     if (add_char_to_buffer(current_arg_buffer, input_line[i]) < 0) {
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
+                    i++; // Advance past the escaped character
                 }
-                i++; // Advance past the escaped character (or the literal backslash if nothing followed)
             } else if (current_char == '\'') {
                 state.in_single_quote = 1; // Enter single quote
                 i++;
@@ -218,9 +271,7 @@ char** parse_arguments(const char* input_line) {
             } else {
                 // Regular character, add to buffer
                 if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
-                    free_arg_buffer(current_arg_buffer);
-                    free_argv(argv);
-                    return NULL;
+                    free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                 }
                 i++;
             }
