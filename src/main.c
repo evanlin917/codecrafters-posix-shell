@@ -85,12 +85,13 @@ void free_argv(char** argv) {
 // Returns 0 if not a C-style escape, 1 if processed.
 // If processed, `*escaped_char` will hold the resulting character.
 // `*chars_consumed` will hold how many chars from `input` were processed (e.g., 2 for \n).
+// This is used for transformations within double quotes typically.
 int process_c_style_escape(const char* input, char* escaped_char, int* chars_consumed) {
     if (input[0] == '\0') { // Need at least one character after backslash
         return 0;
     }
 
-    *chars_consumed = 2; // Default for \X where X is one char
+    *chars_consumed = 2; // Default for \X where X is one char processed after backslash
 
     switch (input[0]) {
         case 'n': *escaped_char = '\n'; break;
@@ -100,12 +101,16 @@ int process_c_style_escape(const char* input, char* escaped_char, int* chars_con
         case 'v': *escaped_char = '\v'; break;
         case 'a': *escaped_char = '\a'; break;
         case 'r': *escaped_char = '\r'; break;
-        case '\\': *escaped_char = '\\'; break; // Escaping backslash itself
-        case '"': *escaped_char = '"'; break;   // Escaping double quote
-        case '\'': *escaped_char = '\''; break; // Escaping single quote
-        case '$': *escaped_char = '$'; break;   // Escaping dollar sign
-        case '`': *escaped_char = '`'; break;   // Escaping backtick (this was also potentially problematic if it had similar artifacts)
-        default: return 0; // Not a recognized C-style escape
+        // Characters that retain their literal meaning but drop the backslash
+        case '\\': *escaped_char = '\\'; break;
+        case '"': *escaped_char = '"'; break;
+        case '$': *escaped_char = '$'; break;   // Backslash escapes dollar sign to become literal dollar sign
+        case '`': *escaped_char = '`'; break;   // Backslash escapes dollar sign to become literal dollar sign
+        default:
+            // If it's not a special C-style or Bash-like escape, the backslash is *not* consumed here.
+            // The calling `parse_arguments` logic will then treat the backslash as literal,
+            // followed by the character that was not 'escaped' by this function.
+            return 0;
     }
     return 1;
 }
@@ -118,7 +123,7 @@ int process_octal_escape(const char* input, char* escaped_char) {
     int digits = 0;
     int i = 0;
 
-    // Check for up to 3 octal digits
+    // Read up to 3 octal digits
     while (i < 3 && isdigit((unsigned char)input[i]) && input[i] >= '0' && input[i] <= '7') {
         val = val * 8 + (input[i] - '0');
         digits++;
@@ -134,6 +139,8 @@ int process_octal_escape(const char* input, char* escaped_char) {
 
 
 // --- Core Parsing Function ---
+// This function will replace the logic in your original split_args
+// and the echo command parsing.
 char** parse_arguments(const char* input_line) {
     char** argv = malloc(MAX_ARGS * sizeof(char*));
     if (argv == NULL) {
@@ -162,15 +169,14 @@ char** parse_arguments(const char* input_line) {
         if (state.in_single_quote) {
             if (current_char == '\'') {
                 state.in_single_quote = 0; // End single quote
+                i++;
             } else {
                 // In single quotes, ALL characters are literal, including backslashes.
                 if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
-                    free_arg_buffer(current_arg_buffer);
-                    free_argv(argv);
-                    return NULL;
+                    free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                 }
+                i++;
             }
-            i++;
         } else if (state.in_double_quote) {
             if (current_char == '"') {
                 state.in_double_quote = 0; // End double quote
@@ -179,32 +185,33 @@ char** parse_arguments(const char* input_line) {
                 char escaped_char_val;
                 int consumed_chars = 0;
 
-                // Try C-style escapes first (like \n, \t)
+                // Try C-style escapes first (e.g., \n, \t, or quoted special chars like \", \\)
                 if (process_c_style_escape(&input_line[i+1], &escaped_char_val, &consumed_chars)) {
                     if (add_char_to_buffer(current_arg_buffer, escaped_char_val) < 0) {
                         free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
-                    i += consumed_chars; // Advance past \ and the escaped char
+                    i += consumed_chars; // Advance past '\' and the escaped char
                 }
-                // Then try octal escapes (like \033)
+                // Then try octal escapes (e.g., \033)
                 else if ((consumed_chars = process_octal_escape(&input_line[i+1], &escaped_char_val)) > 0) {
                      if (add_char_to_buffer(current_arg_buffer, escaped_char_val) < 0) {
                         free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
-                    i += consumed_chars; // Advance past \ and the octal digits
+                    i += consumed_chars; // Advance past '\' and the octal digits
                 }
-                // If not a recognized escape, the backslash itself is literal
+                // If not a recognized escape, the backslash itself is literal, then the next char is also literal.
+                // This typically applies to `\X` where X is not a special char.
                 else {
-                    if (add_char_to_buffer(current_arg_buffer, current_char) < 0) { // Add '\\'
+                    if (add_char_to_buffer(current_arg_buffer, current_char) < 0) { // Add literal '\\'
                         free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
                     i++; // Advance past the literal backslash
-                    // If a character follows, it's also literal
+                    // The character following the backslash is also literal if it wasn't escaped
                     if (input_line[i] != '\0') {
                         if (add_char_to_buffer(current_arg_buffer, input_line[i]) < 0) {
                             free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                         }
-                        i++; // Advance past the literal character after backslash
+                        i++; // Advance past the literal character
                     }
                 }
             } else {
@@ -216,28 +223,22 @@ char** parse_arguments(const char* input_line) {
             }
         } else { // Not in any quotes
             if (current_char == '\\') {
-                char escaped_char_val;
-                int consumed_chars = 0;
-
-                // Try C-style escapes (often not processed unquoted by default shells,
-                // but if your "read more" implies it, here's where it goes)
-                // For typical shell, \n unquoted is 'n'
-                // Revert to simpler interpretation for unquoted \
-                
-                i++; // Advance past the backslash
+                i++; // Advance past the backslash to the character it's escaping
                 if (input_line[i] == '\0') {
-                    // Trailing backslash unquoted is literal
+                    // Trailing backslash unquoted is literal (e.g., `cmd arg\`)
+                    // Or could be treated as an error, depends on shell strictness.
+                    // For this challenge, assume literal backslash.
                     if (add_char_to_buffer(current_arg_buffer, '\\') < 0) {
                         free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
                 } else {
-                    // Unquoted backslash escapes the next character.
-                    // This means the next character is added literally, dropping the '\'.
+                    // Non-quoted backslash escapes the next character.
+                    // It preserves its literal value, effectively dropping the backslash.
                     if (add_char_to_buffer(current_arg_buffer, input_line[i]) < 0) {
                         free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
-                    i++; // Advance past the escaped character
                 }
+                i++; // Advance past the escaped character (or the original position if trailing \)
             } else if (current_char == '\'') {
                 state.in_single_quote = 1; // Enter single quote
                 i++;
@@ -249,16 +250,12 @@ char** parse_arguments(const char* input_line) {
                 if (current_arg_buffer->length > 0) {
                     if (argc >= MAX_ARGS - 1) { // Check for max arguments
                         fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
                     argv[argc] = strdup(current_arg_buffer->buffer);
                     if (!argv[argc]) {
                         perror("parse_arguments: strdup failed");
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
                     argc++;
                     current_arg_buffer->length = 0; // Reset buffer for next argument
@@ -282,16 +279,12 @@ char** parse_arguments(const char* input_line) {
     if (current_arg_buffer->length > 0) {
         if (argc >= MAX_ARGS - 1) {
             fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-            free_arg_buffer(current_arg_buffer);
-            free_argv(argv);
-            return NULL;
+            free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
         }
         argv[argc] = strdup(current_arg_buffer->buffer);
         if (!argv[argc]) {
             perror("parse_arguments: strdup failed for final arg");
-            free_arg_buffer(current_arg_buffer);
-            free_argv(argv);
-            return NULL;
+            free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
         }
         argc++;
     }
@@ -310,6 +303,7 @@ char** parse_arguments(const char* input_line) {
 }
 
 // Helper function to handle `echo` commands
+// Now takes char** argv instead of const char* args
 void handle_echo_cmd(char** argv) {
     // argv[0] is "echo", subsequent elements are the arguments to echo
     for (int i = 1; argv[i] != NULL; i++) {
@@ -319,7 +313,7 @@ void handle_echo_cmd(char** argv) {
 }
 
 // Helper function to handle `exit` commands
-int handle_exit_cmd(char** argv) {
+int handle_exit_cmd(char** argv) { // Now takes char** argv
     if (argv[1] != NULL) {
         return atoi(argv[1]);
     }
@@ -327,7 +321,7 @@ int handle_exit_cmd(char** argv) {
 }
 
 // Helper function to handle `type` commands
-void handle_type_cmd(char** argv) {
+void handle_type_cmd(char** argv) { // Now takes char** argv
     // argv[0] is "type", argv[1] onwards are commands to type
     if (argv[1] == NULL || *argv[1] == '\0') {
         printf("type: usage: type name [...]\n");
@@ -406,7 +400,7 @@ char* handle_pwd_cmd() {
 }
 
 // Helper function to handle `cd` commands
-void handle_cd_cmd(char** argv) {
+void handle_cd_cmd(char** argv) { // Now takes char** argv
     const char* path = argv[1]; // The first argument to cd
 
     const char* target_path;
@@ -434,6 +428,15 @@ void handle_cd_cmd(char** argv) {
     if (chdir(target_path) != 0) {
         printf("cd: %s: No such file or directory\n", target_path);
     }
+}
+
+// Helper function to trim leading spaces - NOT USED AFTER PARSE_ARGUMENTS
+// Kept for consistency if you have other uses, but parse_arguments handles this.
+char* trim_leading_spaces(char* str) {
+    while (isspace((unsigned char) *str)) {
+        str++;
+    }
+    return str;
 }
 
 // Helper function to find if executable exists in PATH
@@ -518,13 +521,13 @@ int main() {
             input[inputLen - 1] = '\0';
         }
 
-        // Skip command if input is empty after trimming, or only whitespace
-        if (strlen(input) == 0) {
-            continue;
-        }
+        // The trim_leading_spaces is no longer strictly necessary because
+        // parse_arguments handles initial whitespace, but can keep for safety
+        // if other parts of your shell might use raw 'input' string directly.
+        char* processedInput = input; // parse_arguments will handle leading/trailing spaces correctly
 
         // Parse the entire line into arguments
-        char** parsed_argv = parse_arguments(input); 
+        char** parsed_argv = parse_arguments(processedInput); 
 
         // Handle parsing errors (e.g., unterminated quotes)
         if (parsed_argv == NULL) {
@@ -532,14 +535,15 @@ int main() {
             continue; 
         }
 
-        // If no command was parsed (e.g., input was just quotes that cancelled out, or empty after parsing)
+        // If no command was parsed (e.g., input was just whitespace or empty after parsing)
         if (parsed_argv[0] == NULL) {
-            free_argv(parsed_argv);
+            free_argv(parsed_argv); // Free the array itself
             continue;
         }
 
         const char* command = parsed_argv[0];
 
+        // Now all built-in commands receive parsed_argv directly
         if (strcmp(command, "exit") == 0) {
             status = handle_exit_cmd(parsed_argv);
             free_argv(parsed_argv);
@@ -554,12 +558,12 @@ int main() {
                 printf("%s\n", pwd);
                 free(pwd);
             } else {
-                // Error message from handle_pwd_cmd, just print generic
                 printf("pwd: could not retrieve current working directory\n");
             }
         } else if (strcmp(command, "cd") == 0) {
             handle_cd_cmd(parsed_argv);
         } else {
+            // For external commands, search PATH and execute
             char* exePath = find_exe_in_path(command);
             if (exePath != NULL) {
                 execute_external_exe(exePath, parsed_argv); // Pass the full parsed_argv
