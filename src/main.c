@@ -9,6 +9,161 @@
 #define BUF_SIZE 512
 #define MAX_ARGS 64
 
+typedef struct {
+  int in_single_quote;
+  int in_double_quote;
+  int escape_next;
+  int pos;
+} ParseState;
+
+typedef struct {
+  char processed_char;
+  int should_add_char;
+  int should_break_arg;
+  int advance_pos;
+} CharResult;
+
+typedef struct {
+  char* buffer;
+  size_t capacity;
+  size_t length;
+} ArgBuffer;
+
+// Helper function to initialize parsing state
+ParseState init_parse_state() {
+  ParseState state = {0};
+  return state;
+}
+
+// Helper function to initialize argument buffer
+ArgBuffer* init_arg_buffer() {
+  ArgBuffer* buf = malloc(sizeof(ArgBuffer));
+  if (!buf) {
+    return NULL;
+  }
+
+  buf->capacity = 64;
+  buf->length = 0;
+  buf->buffer = malloc(buf->capacity);
+  if (!buf->buffer) {
+    free(buf);
+    return NULL;
+  }
+  buf->buffer[0] = '\0';
+
+  return buf;
+}
+
+// Helper function to process escape sequences
+char process_escape_sequence(char escaped_char, ParseState* state) {
+  switch (escaped_char) {
+    case 'n':
+      return '\n';
+    case 't':
+      return "\t";
+    case '\\':
+      return '\\';
+    case '"':
+      return '"';
+    case '\'':
+      return '\'';
+    case ' ':
+      return ' ';
+    default:
+      return escaped_char;           
+  }
+}
+
+// Helper function to handle quote state transitions
+void handle_quote_transition(char current_char, ParseState* state) {
+  if (state->escape_next) {
+    return;
+  }
+
+  if (current_char =='\'' && !state->in_double_quote) {
+    state->in_single_quote = !state->in_single_quote;
+  } else if (current_char == '"' && !state->in_single_quote) {
+    state->in_double_quote = !state->in_double_quote;
+  }
+}
+
+// Helper argument to determine if current character should break current argument
+int should_break_argument(char current_char, ParseState* state) {
+  if (state->in_single_quote || state->in_double_quote || state->escape_next) {
+    return 0;
+  }
+
+  return (current_char == ' ');
+}
+
+// Helper function to process single character and return result
+CharResult process_character(const char* input, ParseState* state) {
+  CharResult result = {0};
+  char current_char = input[state->pos];
+
+  if (state->escape_next == 1) {
+    result.processed_char = process_escape_sequence(current_char, state);
+    result.should_add_char = 1;
+    result.advance_pos = 1;
+    state->escape_next = 0;
+    return result;
+  }
+
+  if (current_char == '\\' && !state->in_single_quote) {
+    state->escape_next = 1;
+    result.advance_pos = 1;
+    return result;
+  }
+
+  handle_quote_transition(current_char, state);
+  result.should_break_arg = should_break_argument(current_char, state);
+
+  if (!result.should_break_arg && 
+      !((current_char == '\'' || current_char =='"') && !state->escape_next)) {
+      result.processed_char = current_char;
+      result.should_add_char = 1;
+  }
+
+  result.advance_pos = 1;
+  return result;
+}
+
+// Helper function to add character to argument buffer with dynamic resizing
+int add_char_to_buffer(ArgBuffer* buf, char c) {
+  if (buf->length + 1 >= buf->capacity) {
+    size_t new_capacity = buf->capacity * 2;
+    char* new_buffer = realloc(buf->buffer, new_capacity);
+    if (!new_buffer) {
+      return -1;
+    }
+    buf->buffer = new_buffer;
+    buf->capacity = new_capacity;
+  }
+
+  buf->buffer[buf->length++] = c;
+  buf->buffer[buf->length] = '\0';
+  return 0;
+}
+
+// Helper function to free argument buffer
+void free_arg_buffer(ArgBuffer* buf) {
+  if (buf != NULL) {
+    free(buf->buffer);
+    free(buf);
+  }
+}
+
+// Helper function to cleanup argv on error
+void cleanup_argv_on_error(char** argv, int argc) {
+  for (int i = 0; i < argc; i++) {
+    if (argv[i] != NULL) {
+      free(argv[i]);
+    }
+  }
+
+  free(argv);
+}
+
 // Helper function to handle `echo` commands
 void handle_echo_cmd(const char* args) {
   if (args == NULL) {
@@ -16,45 +171,59 @@ void handle_echo_cmd(const char* args) {
     return;
   }
 
-  int len = strlen(args);
-  int i = 0;
+  ParseState state = init_parse_state();
+  int input_len = strlen(args);
   int first_arg = 1;
+  ArgBuffer* current_arg = init_arg_buffer();
 
-  while (i < len) {
-    while (i < len && args[i] == ' ') {
-      i++;
+  if (current_arg == NULL) {
+    printf("\n");
+    return;
+  }
+
+  while (state.pos < input_len && args[state.pos] == ' ') {
+    state.pos++;
+  }
+
+  while (state.pos < input_len) {
+    CharResult result = process_character(args, &state);
+
+    if (result.should_add_char == 1) {
+      if (add_char_to_buffer(current_arg, result.processed_char) < 0) {
+        free_arg_buffer(current_arg);
+        printf("\n");
+        return;
+      }
     }
 
-    if (i >= len) {
-      break;
-    }
+    if (result.should_break_arg == 1 && current_arg->length > 0) {
+      if (!first_arg) {
+        printf(" ");
+      }
+      printf("%s", current_arg->buffer);
+      first_arg = 0;
 
+      current_arg->length = 0;
+      current_arg->buffer[0] = '\0';
+
+      while (state.pos + result.advance_pos < input_len && 
+             args[state.pos + result.advance_pos] == ' ') {
+        result.advance_pos++;
+      }
+    }
+    
+    state.pos += result.advance_pos;
+  }
+
+  if (current_arg->length > 0) {
     if (!first_arg) {
       printf(" ");
     }
-    first_arg = 0;
-
-    while (i < len && args[i] != ' ') {
-      if (args[i] == '\'' || args[i] == '"') {
-        char quote_char = args[i];
-        i++;
-
-        while (i < len && args[i] != quote_char) {
-          printf("%c", args[i]);
-          i++;
-        }
-
-        if (i < len && args[i] == quote_char) {
-          i++;
-        }
-      } else {
-        printf("%c", args[i]);
-        i++;
-      }
-    }
+    printf("%s", current_arg->buffer);
   }
 
   printf("\n");
+  free_arg_buffer(current_arg);
 }
 
 // Helper function to handle `exit` commands
@@ -244,50 +413,64 @@ char** split_args(const char* command, const char* args) {
   argc++;
 
   if (args != NULL && *args != '\0') {
-    int len = strlen(args);
-    int i = 0;
+    ParseState state = init_parse_state();
+    ArgBuffer* current_arg = init_arg_buffer();
 
-    while (i < len && argc < MAX_ARGS - 1) {
-      while (i < len && args[i] == ' ') {
-        i++;
-      }
+    if (current_arg == NULL) {
+      cleanup_argv_on_error(argv, argc);
+      return NULL;
+    }
 
-      if (i >= len) {
-        break;
-      }
+    int input_len = strlen(args);
 
-      char arg_buffer[BUF_SIZE];
-      int arg_len = 0;
+    while (state.pos < input_len && args[state.pos] == ' ') {
+      state.pos++;
+    }
 
-      while (i < len && args[i] != ' ' && arg_len < BUF_SIZE - 1) {
-        if (args[i] == '\'' || args[i] == '"') {
-          char quote_char = args[i];
-          i++;
+    while (state.pos < input_len && argc < MAX_ARGS - 1) {
+      CharResult result = process_character(args, &state);
 
-          while (i < len && args[i] != quote_char && arg_len < BUF_SIZE - 1) {
-            arg_buffer[arg_len++] = args[i];
-            i++;
-          }
-          if (i < len && args[i] == quote_char) {
-            i++;
-          }
-        } else {
-          arg_buffer[arg_len++] = args[i];
-          i++;
+      if (result.should_add_char == 1) {
+        if (add_char_to_buffer(current_arg, result.processed_char) < 0) {
+          free_arg_buffer(current_arg);
+          cleanup_argv_on_error(argv, argc);
+          return NULL;
         }
       }
 
-      arg_buffer[arg_len] = '\0';
-      argv[argc] = strdup(arg_buffer);
-      if (argv[argc] == NULL) {
-        fprintf(stderr, "shell: argument buller is null\n");
-        for (int j = 0; j < argc; j++) {
-          free(argv[j]);
+      if (result.should_break_arg == 1 && current_arg->length > 0) {
+        argv[argc] = strdup(current_arg->buffer);
+        if (argv[argc] == NULL) {
+          free_arg_buffer(current_arg);
+          cleanup_argv_on_error(argv, argc);
+          return NULL;
         }
-        free(argv);
-        return NULL;
+
+        argc++;
+        
+        current_arg->length = 0;
+        current_arg->buffer[0] = '\0';
+
+        while (state.pos + result.advance_pos < input_len && 
+               args[state.pos + result.advance_pos] == ' ') {
+          result.advance_pos++;
+        }
       }
-      argc++;
+
+      state.pos += result.advance_pos;
+    }
+
+    if (current_arg ->length > 0 && argc < MAX_ARGS - 1) {
+      argv[argc] = strdup(current_arg->buffer);
+      if (argv[argc] != NULL) {
+        argc++;
+      }
+    }
+
+    free_arg_buffer(current_arg);
+
+    if (state.in_single_quote == 1 || state.in_double_quote == 1) {
+      fprintf(stderr, "shell: unterminated quote in command line\n");
     }
   }
 
