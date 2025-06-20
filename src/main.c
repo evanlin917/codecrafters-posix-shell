@@ -188,8 +188,6 @@ char** parse_arguments(const char* input_line) {
                 } else {
                     // Non-quoted backslash escapes the next character.
                     // It preserves its literal value, effectively dropping the backslash.
-                    // E.g., `world\ \ \ \ \ \ script` -> `world      script`
-                    // E.g., `"/tmp/file\ name"` -> `/tmp/file name`
                     if (add_char_to_buffer(current_arg_buffer, input_line[i]) < 0) {
                         free_arg_buffer(current_arg_buffer);
                         free_argv(argv);
@@ -203,7 +201,78 @@ char** parse_arguments(const char* input_line) {
             } else if (current_char == '"') {
                 state.in_double_quote = 1; // Enter double quote
                 i++;
-            } else if (isspace((unsigned char)current_char)) {
+            } else if ((current_char == '1' || current_char == '2') && input_line[i+1] == '>') {
+                if (current_arg_buffer->length > 0) {
+                    if (argc >= MAX_ARGS - 1) {
+                        fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                        free_arg_buffer(current_arg_buffer);
+                        free_argv(argv);
+                        return NULL;
+                    }
+                    argv[argc] = strdup(current_arg_buffer->buffer);
+                    if (!argv[argc]) {
+                        perror("parse_arguments: strdup failed");
+                        free_arg_buffer(current_arg_buffer);
+                        free_argv(argv);
+                        return NULL;
+                    }
+
+                    argc++;
+                    current_arg_buffer->length = 0;
+                    current_arg_buffer->buffer[0] = '\0';
+                }
+
+                if (argc >= MAX_ARGS - 1) {
+                    fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                    free_arg_buffer(current_arg_buffer);
+                    free_argv(argv);
+                    return NULL;
+                }
+
+                char compound_redir[3];
+                compound_redir[0] = current_char;
+                compound_redir[1] = '>';
+                compound_redir[2] = '\0';
+                argv[argc] = strdup(compound_redir);
+                if (!argv[argc]) {
+                    perror("parse_arguments: strdup failed for compound redir");
+                    free_arg_buffer(current_arg_buffer);
+                    free_argv(argv);
+                    return NULL;
+                }
+                argc++;
+                i += 2;
+            }
+            else if (current_char == '>' || current_char == '<' || current_char == '|') {
+                // Handle single character operators like '>', '<', '|'
+                // If there's an argument being built, finalize it
+                if (current_arg_buffer->length > 0) {
+                    if (argc >= MAX_ARGS - 1) {
+                        fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                    }
+                    argv[argc] = strdup(current_arg_buffer->buffer);
+                    if (!argv[argc]) { perror("parse_arguments: strdup failed"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                    argc++;
+                    current_arg_buffer->length = 0;
+                    current_arg_buffer->buffer[0] = '\0';
+                }
+
+                // Add the single operator as its own argument
+                if (argc >= MAX_ARGS - 1) {
+                    fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                    free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                }
+                char temp_char_str[2];
+                temp_char_str[0] = current_char;
+                temp_char_str[1] = '\0';
+                argv[argc] = strdup(temp_char_str);
+                if (!argv[argc]) { perror("parse_arguments: strdup failed for single redir"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                argc++;
+                i++; // Consume the current character
+            }
+            // *** END OF REORDERED AND FIXED LOGIC ***
+            else if (isspace((unsigned char)current_char)) { // Original whitespace handling
                 // Argument boundary: if buffer has content, add it as an argument
                 if (current_arg_buffer->length > 0) {
                     if (argc >= MAX_ARGS - 1) { // Check for max arguments
@@ -225,61 +294,6 @@ char** parse_arguments(const char* input_line) {
                 }
                 // Skip subsequent whitespace
                 while (isspace((unsigned char)input_line[i])) {
-                    i++;
-                }
-            } else if (current_char == '>' || current_char == '<' || current_char == '|') {
-                if (current_arg_buffer->length > 0) {
-                    if (argc >= MAX_ARGS - 1) {
-                        fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
-                    }
-                    argv[argc] = strdup(current_arg_buffer->buffer);
-                    if (!argv[argc]) {
-                        perror("parse_arguments: strdup failed");
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
-                    }
-                    argc++;
-                    current_arg_buffer->length = 0;
-                    current_arg_buffer->buffer[0] = '\0';
-                }
-
-                if (argc >= MAX_ARGS - 1) {
-                    fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                    free_arg_buffer(current_arg_buffer);
-                    free_argv(argv);
-                    return NULL;
-                }
-
-                if ((current_char == '1' || current_char == '2') && input_line[i+1] == '>') {
-                    char compound_redir[3];
-                    compound_redir[0] = current_char;
-                    compound_redir[1] = '>';
-                    compound_redir[2] = '\0';
-                    argv[argc] = strdup(compound_redir);
-                    if (!argv[argc]) {
-                        perror("parse_arguments: strdup failed for compound redir");
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
-                    }
-                    argc++;
-                    i += 2;
-                } else {
-                    char temp_char_str[2];
-                    temp_char_str[0] = current_char;
-                    temp_char_str[1] = '\0';
-                    argv[argc] = strdup(temp_char_str);
-                    if (!argv[argc]) {
-                        perror("parse_arguments: strdup failed for single redir");
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
-                    }
-                    argc++;
                     i++;
                 }
             } else {
