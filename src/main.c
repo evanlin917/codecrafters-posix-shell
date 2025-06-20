@@ -124,9 +124,9 @@ char** parse_arguments(const char* input_line) {
         if (state.in_single_quote) {
             if (current_char == '\'') {
                 state.in_single_quote = 0; // End single quote
-                i++;
+                i++; // Consume the quote, do NOT add to buffer
             } else {
-                // In single quotes, ALL characters are literal, including backslashes.
+                // In single quotes, ALL characters are literal, added to buffer
                 if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
                     free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                 }
@@ -135,7 +135,7 @@ char** parse_arguments(const char* input_line) {
         } else if (state.in_double_quote) {
             if (current_char == '"') {
                 state.in_double_quote = 0; // End double quote
-                i++;
+                i++; // Consume the quote, do NOT add to buffer
             } else if (current_char == '\\') {
                 i++; // Advance past the backslash to the character being (potentially) escaped
 
@@ -168,15 +168,87 @@ char** parse_arguments(const char* input_line) {
                 i++;
             }
         } else { // Not in any quotes
-            // Check for potential argument delimiters or special tokens
-            if (isspace((unsigned char)current_char)) {
-                // Whitespace acts as a delimiter
+            if (current_char == '\\') {
+                i++; // Advance past the backslash to the character it's escaping
+                if (input_line[i] == '\0') {
+                    // Trailing backslash unquoted is literal (e.g., `cmd arg\`)
+                    if (add_char_to_buffer(current_arg_buffer, '\\') < 0) {
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                    }
+                } else {
+                    // Non-quoted backslash escapes the next character.
+                    if (add_char_to_buffer(current_arg_buffer, input_line[i]) < 0) {
+                        free_arg_buffer(current_arg_buffer);
+                        free_argv(argv);
+                        return NULL;
+                    }
+                }
+                i++; // Advance past the escaped character (or the original position if trailing \)
+            } else if (current_char == '\'') {
+                state.in_single_quote = 1; // Enter single quote (don't add quote to buffer)
+                i++;
+            } else if (current_char == '"') {
+                state.in_double_quote = 1; // Enter double quote (don't add quote to buffer)
+                i++;
+            }
+            // --- REVISED PARSING LOGIC FOR NON-QUOTED CHARACTERS/TOKENS ---
+            // Order of checks is crucial: Compound redirects > Single redirects > Whitespace > Regular chars
+
+            // 1. Compound Redirection (e.g., "1>", "2>")
+            //    Check if the current character is a digit '1' or '2' AND if it's followed by '>'
+            else if ((i + 1 < strlen(input_line)) && (current_char == '1' || current_char == '2') && input_line[i+1] == '>') {
+                // Finalize any existing argument if one is being built
                 if (current_arg_buffer->length > 0) {
-                    if (argc >= MAX_ARGS - 1) { /* error handling */ }
+                    if (argc >= MAX_ARGS - 1) { fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
                     argv[argc] = strdup(current_arg_buffer->buffer);
                     if (!argv[argc]) { perror("parse_arguments: strdup failed"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
                     argc++;
-                    current_arg_buffer->length = 0; // Reset for next argument
+                    current_arg_buffer->length = 0;
+                    current_arg_buffer->buffer[0] = '\0';
+                }
+                
+                // Add the compound redirection token itself
+                if (argc >= MAX_ARGS - 1) { fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                char compound_redir[3];
+                compound_redir[0] = current_char; // '1' or '2'
+                compound_redir[1] = '>';
+                compound_redir[2] = '\0';
+                argv[argc] = strdup(compound_redir);
+                if (!argv[argc]) { perror("parse_arguments: strdup failed for compound redir"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                argc++;
+                i += 2; // Consume both the digit and the '>'
+            }
+            // 2. Single Redirection/Pipe Operators (e.g., ">", "<", "|")
+            else if (current_char == '>' || current_char == '<' || current_char == '|') {
+                // Finalize any existing argument if one is being built
+                if (current_arg_buffer->length > 0) {
+                    if (argc >= MAX_ARGS - 1) { fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                    argv[argc] = strdup(current_arg_buffer->buffer);
+                    if (!argv[argc]) { perror("parse_arguments: strdup failed"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                    argc++;
+                    current_arg_buffer->length = 0;
+                    current_arg_buffer->buffer[0] = '\0';
+                }
+                
+                // Add the single operator as its own argument
+                if (argc >= MAX_ARGS - 1) { fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                char temp_char_str[2];
+                temp_char_str[0] = current_char;
+                temp_char_str[1] = '\0';
+                argv[argc] = strdup(temp_char_str);
+                if (!argv[argc]) { perror("parse_arguments: strdup failed for single redir"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                argc++;
+                i++; // Consume the current character
+            }
+            // 3. Whitespace (always separates arguments)
+            else if (isspace((unsigned char)current_char)) {
+                // If there's content in the buffer, finalize it as an argument
+                if (current_arg_buffer->length > 0) {
+                    if (argc >= MAX_ARGS - 1) { fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                    argv[argc] = strdup(current_arg_buffer->buffer);
+                    if (!argv[argc]) { perror("parse_arguments: strdup failed"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                    argc++;
+                    current_arg_buffer->length = 0;
                     current_arg_buffer->buffer[0] = '\0';
                 }
                 i++; // Consume the space
@@ -184,224 +256,13 @@ char** parse_arguments(const char* input_line) {
                 while (isspace((unsigned char)input_line[i])) {
                     i++;
                 }
-            } else if (current_char == '>' || current_char == '<' || current_char == '|') {
-                // Redirection/pipe operator acts as a delimiter and is its own argument
-                // If there's an argument being built, finalize it first
-                if (current_arg_buffer->length > 0) {
-                    if (argc >= MAX_ARGS - 1) {
-                        fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
-                    }
-                    argv[argc] = strdup(current_arg_buffer->buffer);
-                    if (!argv[argc]) { perror("parse_arguments: strdup failed"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                    argc++;
-                    current_arg_buffer->length = 0;
-                    current_arg_buffer->buffer[0] = '\0';
+            }
+            // 4. Regular characters (builds an argument)
+            else {
+                if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
+                    free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                 }
-
-                // Handle compound redirection (e.g., 1>, 2>>) or single operators
-                if (current_char == '>') { // Check for output redirection variations
-                    if (input_line[i+1] == '1' && input_line[i+2] == '\0') { // Case for "1>" at EOL (less common)
-                        // This specific check may be too narrow if it's "1> file"
-                        // Re-evaluate how compound "1>" should be handled.
-                        // Standard shells treat "1>" as one token. Your parse_args_with_redirection expects ">1".
-                        // Let's simplify: `parse_arguments` should produce "1", ">", "file" or "file".
-                        // No, `parse_args_with_redirection` checks for "1>" as one token.
-                        // So `parse_arguments` needs to produce "1>" as one token.
-
-                        // Corrected logic for 1> or 2>
-                        if ((i + 1 < strlen(input_line)) && (input_line[i-1] == '1' || input_line[i-1] == '2')) { // If prev char was '1' or '2' AND current is '>'
-                            // This means '1' was already captured by the general 'else' block
-                            // THIS IS THE BUG. 'current_char' being '>' doesn't mean the '1' was a regular char.
-                            // The logic needs to look *ahead* for '1>' or '2>' when it sees '1' or '2'.
-                            // Reverting to previous state for `current_char` for numbers, and only looking ahead for `>`.
-                            // Let's retry the entire `else` block logic.
-                            // This approach is making it overly complex.
-
-                            // Reset current_arg_buffer and re-parse the 1 or 2 as part of the redirection.
-                            // Better: simply add '>' and rely on the `parse_args_with_redirection` to combine.
-                            // BUT, the test output shows '1' is separate.
-
-                            // The simplest way to achieve `{"cmd", "arg", "1>", "file"}` tokenization
-                            // is to have `parse_arguments` treat '1' or '2' followed by '>' as a single token.
-                            // If it's a '1' or '2' NOT followed by '>', it's a regular number.
-
-                            // Let's revert the block for `>` in `parse_arguments`
-                            // and reconsider the overall structure.
-                        }
-                    }
-                }
-
-                // If a current argument buffer has content, finalize it before the operator
-                if (current_arg_buffer->length > 0) {
-                    if (argc >= MAX_ARGS - 1) { /* error */ }
-                    argv[argc] = strdup(current_arg_buffer->buffer);
-                    if (!argv[argc]) { perror("parse_arguments: strdup failed"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                    argc++;
-                    current_arg_buffer->length = 0;
-                    current_arg_buffer->buffer[0] = '\0';
-                }
-
-                // Add the operator itself
-                if (argc >= MAX_ARGS - 1) { /* error */ }
-                if (current_char == '>' && input_line[i+1] == '1' && // Looking for `>1` pattern (less common, usually `1>`)
-                    (input_line[i] == ' ' || input_line[i] == '\0' || isspace((unsigned char)input_line[i]) )
-                   ) { // this condition is problematic because it checks current_char as '>' not '1'
-                    // This entire `if` should be for `current_char` being '1' or '2' first, not '>'.
-                    // So, my previous nested `if` was closer to the mark, but ordered wrong.
-                    // Let's refine the overall logic structure.
-
-                    // The actual fix needed:
-                    // When a number is followed by a redirect, treat them as one token.
-                    // This means the digit itself *must not* be put into current_arg_buffer if it's the start of a redirect.
-
-                    // RESTARTING THIS `else` BLOCK'S LOGIC FOR CLARITY
-
-                    // Original characters (backslash, quotes handled above)
-                    // New logic below
-                    // Check for potential redirects/pipes first
-                    // The order of checks is paramount.
-                    // 1. Compound redirects like '1>'
-                    // 2. Simple redirects like '>'
-                    // 3. Whitespace
-                    // 4. Regular characters
-
-                    // No, the `isspace` check or the regular character `else` will ALWAYS preempt
-                    // the proper parsing of `1>` unless the main loop explicitly
-                    // checks for it as a *special sequence*.
-
-                    // This structure is what's necessary:
-                    // If current char is backslash, handle it
-                    // Else if current char is quote, handle it
-                    // Else if current char is '1' or '2' AND next char is '>', handle '1>' as token.
-                    // Else if current char is '>' or '<' or '|', handle it as token.
-                    // Else if current char is whitespace, handle it.
-                    // Else (regular char), add to buffer.
-
-                    // Let's refine based on that:
-                    // Remove the `isspace || > || < || |` condition from the `if`.
-                    // Put it back to its simpler form and add proper precedence.
-                } else { // Single char operator or other
-                    char temp_str[2];
-                    temp_str[0] = current_char;
-                    temp_str[1] = '\0';
-                    argv[argc] = strdup(temp_str);
-                    if (!argv[argc]) { perror("parse_arguments: strdup failed for single redir"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                    argc++;
-                    i++;
-                }
-                // Skip subsequent whitespace after an argument (or operator)
-                while (isspace((unsigned char)input_line[i])) {
-                    i++;
-                }
-            } else if (current_char == '\\') { // This part is out of place, already handled above
-                // ... This block is redundant if backslash is handled at the very top.
-                // It means the structure I suggested in the previous message (and you implemented)
-                // is slightly off. The backslash and quotes should be the absolute first checks
-                // *within* the `while (input_line[i] != '\0')` loop, as they affect the *state*.
-                // The `else` branch of that main `if/else if/else` block is "not in quotes".
-
-                // Correcting the structure of the 'not in any quotes' block:
-                // This is the current structure:
-                // `if (state.in_single_quote)`
-                // `else if (state.in_double_quote)`
-                // `else { // Not in any quotes }` <- THIS is the block we're refining.
-                // Inside this `else` block:
-
-                if (current_char == '\\') { // This specific check is correct in this place
-                    i++; // Advance past the backslash to the character it's escaping
-                    if (input_line[i] == '\0') {
-                        if (add_char_to_buffer(current_arg_buffer, '\\') < 0) {
-                            free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
-                        }
-                    } else {
-                        if (add_char_to_buffer(current_arg_buffer, input_line[i]) < 0) {
-                            free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
-                        }
-                    }
-                    i++;
-                } else if (current_char == '\'') { // This specific check is correct in this place
-                    state.in_single_quote = 1;
-                    i++;
-                } else if (current_char == '"') { // This specific check is correct in this place
-                    state.in_double_quote = 1;
-                    i++;
-                }
-                // --- Start of NEW/REVISED Parsing Logic for non-quoted characters/tokens ---
-                // The issue is *this* section's ordering and logic.
-
-                // Highest priority: Compound Redirection (e.g., "1>", "2>")
-                else if ( (isdigit((unsigned char)current_char)) && (current_char == '1' || current_char == '2') && 
-                          (input_line[i+1] == '>') && (input_line[i+2] != '\0' && !isspace((unsigned char)input_line[i+2])) ) {
-                    // PROBLEM: The `input_line[i+2] != '\0' && !isspace((unsigned char)input_line[i+2]))` is for `2>&1` style.
-                    // For `1> file.txt`, the `file.txt` is the next argument, not part of `1>`.
-
-                    // The logic for '1>' and '2>' needs to be:
-                    // If current char is '1' or '2' AND next char is '>', then it's a redirection token.
-                    // This is sufficient for `1> file.txt`.
-
-                    if (current_arg_buffer->length > 0) { // Finalize any existing argument
-                        if (argc >= MAX_ARGS - 1) { fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                        argv[argc] = strdup(current_arg_buffer->buffer);
-                        if (!argv[argc]) { perror("parse_arguments: strdup failed"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                        argc++;
-                        current_arg_buffer->length = 0;
-                        current_arg_buffer->buffer[0] = '\0';
-                    }
-                    
-                    if (argc >= MAX_ARGS - 1) { fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                    char compound_redir[3];
-                    compound_redir[0] = current_char; // '1' or '2'
-                    compound_redir[1] = '>';
-                    compound_redir[2] = '\0';
-                    argv[argc] = strdup(compound_redir);
-                    if (!argv[argc]) { perror("parse_arguments: strdup failed for compound redir"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                    argc++;
-                    i += 2; // Consume both the digit and the '>'
-                }
-                // Next priority: Single Redirection/Pipe Operators
-                else if (current_char == '>' || current_char == '<' || current_char == '|') {
-                    if (current_arg_buffer->length > 0) { // Finalize any existing argument
-                        if (argc >= MAX_ARGS - 1) { fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                        argv[argc] = strdup(current_arg_buffer->buffer);
-                        if (!argv[argc]) { perror("parse_arguments: strdup failed"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                        argc++;
-                        current_arg_buffer->length = 0;
-                        current_arg_buffer->buffer[0] = '\0';
-                    }
-                    
-                    if (argc >= MAX_ARGS - 1) { fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                    char temp_char_str[2];
-                    temp_char_str[0] = current_char;
-                    temp_char_str[1] = '\0';
-                    argv[argc] = strdup(temp_char_str);
-                    if (!argv[argc]) { perror("parse_arguments: strdup failed for single redir"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                    argc++;
-                    i++; // Consume the current character
-                }
-                // Next priority: Whitespace (always separates arguments)
-                else if (isspace((unsigned char)current_char)) {
-                    if (current_arg_buffer->length > 0) { // Finalize any existing argument
-                        if (argc >= MAX_ARGS - 1) { fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                        argv[argc] = strdup(current_arg_buffer->buffer);
-                        if (!argv[argc]) { perror("parse_arguments: strdup failed"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
-                        argc++;
-                        current_arg_buffer->length = 0;
-                        current_arg_buffer->buffer[0] = '\0';
-                    }
-                    i++; // Consume the space
-                    // Skip subsequent whitespace
-                    while (isspace((unsigned char)input_line[i])) {
-                        i++;
-                    }
-                }
-                // Lowest priority: Regular characters (builds an argument)
-                else {
-                    if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
-                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
-                    }
-                    i++;
-                }
+                i++;
             }
         }
     }
@@ -482,7 +343,8 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
 
     int redirect_idx = -1;
     for (int i = 0; i < total_args; i++) {
-        if (strcmp(all_args[i], ">") == 0 || strcmp(all_args[i], ">1") == 0) {
+        // Updated to explicitly check for "1>" as produced by parse_arguments
+        if (strcmp(all_args[i], ">") == 0 || strcmp(all_args[i], "1>") == 0) {
             redirect_idx = i;
             break;
         }
@@ -558,6 +420,7 @@ void free_parse_result(ParseResult* result) {
 void handle_echo_cmd(char** argv) {
     // argv[0] is "echo", subsequent elements are the arguments to echo
     for (int i = 1; argv[i] != NULL; i++) {
+        // The quotes are now stripped during parsing in parse_arguments
         printf("%s%s", argv[i], (argv[i+1] != NULL) ? " " : "");
     }
     printf("\n");
@@ -726,34 +589,34 @@ char* find_exe_in_path(const char* exe) {
 void execute_external_exe_with_redirection(const char* exePath, char* argv[], RedirectionInfo* redir_info) {
     pid_t pid = fork();
 
-    if (pid == 0) {
+    if (pid == 0) { // Child process
         if (redir_info->has_output_redirect) {
             int fd = open(redir_info->output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
             if (fd == -1) {
                 perror("open");
-                exit(1);
+                exit(1); // Child exits on error
             }
 
             if (dup2(fd, STDOUT_FILENO) == -1) {
                 perror("dup2");
                 close(fd);
-                exit(1);
+                exit(1); // Child exits on error
             }
-            close(fd);
+            close(fd); // Child closes its copy of the original fd
         }
 
         execv(exePath, argv);
-        perror("execv failed");
-        exit(1);
-    } else if (pid > 0) {
+        perror("execv failed"); // Only reached if execv fails
+        exit(1); // Child exits if execv fails
+    } else if (pid > 0) { // Parent process
         int status;
-        waitpid(pid, &status, 0);
-    } else {
+        waitpid(pid, &status, 0); // Parent waits for child
+    } else { // Fork failed
         perror("fork failed");
     }
 }
 
-// Helper function to setup output redirection
+// Helper function to setup output redirection (for built-ins)
 int setup_output_redirection(const char* filename) {
     int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
@@ -779,7 +642,7 @@ int setup_output_redirection(const char* filename) {
     return saved_stdout;
 }
 
-// Helper function to restore stdout
+// Helper function to restore stdout (for built-ins)
 void restore_stdout(int saved_stdout) {
     if (saved_stdout != -1) {
         dup2(saved_stdout, STDOUT_FILENO);
@@ -827,7 +690,7 @@ int main() {
         }
 
         const char* command = parsed_result->argv[0];
-        int saved_stdout = -1;
+        int saved_stdout = -1; // Initialize to -1 for safety
 
         if (strcmp(command, "exit") == 0) {
             status = handle_exit_cmd(parsed_result->argv);
@@ -839,6 +702,7 @@ int main() {
             strcmp(command, "pwd") == 0 ||
             strcmp(command, "cd") == 0
         ) {
+            // Built-in commands handle redirection in the parent process
             if (parsed_result->redir_info->has_output_redirect) {
                 saved_stdout = setup_output_redirection(parsed_result->redir_info->output_file);
                 if (saved_stdout == -1) {
@@ -864,16 +728,18 @@ int main() {
                 handle_cd_cmd(parsed_result->argv);
             }
             
+            // Restore stdout after built-in execution if it was redirected
             if (saved_stdout != -1) {
                 restore_stdout(saved_stdout);
             }
         } else {
+            // External commands handle redirection in the child process
             char* exePath = find_exe_in_path(command);
             if (exePath != NULL) {
                 execute_external_exe_with_redirection(exePath, parsed_result->argv, parsed_result->redir_info);
                 free(exePath);
             } else {
-                printf("%s: command not found\n", command);
+                printf("%s: command not found\n", command); // This prints to original stdout if not redirected in parent
             }
         }
 
