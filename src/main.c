@@ -391,9 +391,11 @@ void free_parse_result(ParseResult* result) {
 void handle_echo_cmd(char** argv) {
     // argv[0] is "echo", subsequent elements are the arguments to echo
     for (int i = 1; argv[i] != NULL; i++) {
+        fprintf(stderr, "DEBUG: handle_echo_cmd - argv[%d]: '%s'\n", i, argv[i]);
         printf("%s%s", argv[i], (argv[i+1] != NULL) ? " " : "");
     }
     printf("\n");
+    fprintf(stderr, "DEBUG: handle_echo_cmd finished.\n");
 }
 
 // Helper function to handle `exit` commands
@@ -675,9 +677,11 @@ int main() {
             if (parsed_result->redir_info->has_output_redirect) {
                 saved_stdout = setup_output_redirection(parsed_result->redir_info->output_file);
                 if (saved_stdout == -1) {
+                    fprintf(stderr, "ERROR: Failed to setup redirection to %s\n", parsed_result->redir_info->output_file);
                     free_parse_result(parsed_result);
                     continue;
                 }
+                fprintf(stderr, "DEBUG: Redirection to '%s' successfully set up. saved_stdout: %d\n", parsed_result->redir_info->output_file, saved_stdout);
             }
 
             if (strcmp(command, "echo") == 0) {
