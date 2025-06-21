@@ -8,6 +8,8 @@
 #include <fcntl.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <dirent.h>
+#include <strings.h>
 
 #define BUF_SIZE 512
 #define MAX_ARGS 64
@@ -924,8 +926,8 @@ void restore_stderr(int saved_stderr) {
 char* command_generator(const char* text, int state) {
     static int builtin_idx;
     static int path_idx;
-    static DIR *dirp = NULL;
-    static char **path_dirs = NULL;
+    static DIR* dirp = NULL;
+    static char** path_dirs = NULL;
     static int path_count = 0;
 
     if (!state) {
