@@ -949,7 +949,7 @@ char** builtin_completion(const char* text, int start, int end) {
 int main() {
     // Initialize readline
     rl_readline_name = "myshell";
-    rl_basic_word_break_chars = " \t\n\"\'`@$><=;|&{(";
+    rl_basic_word_break_characters = " \t\n\"\'`@$><=;|&{(";
 
     // Set up completion function
     rl_attempted_completion_function = builtin_completion;
