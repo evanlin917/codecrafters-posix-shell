@@ -933,7 +933,7 @@ char* command_generator(const char* text, int state) {
     if (!state) {
         builtin_idx = 0;
         path_idx = 0;
-        dirp = NULL
+        dirp = NULL;
 
         if (path_dirs) {
             for (int i = 0; i < path_count; i++) {
@@ -977,7 +977,7 @@ char* command_generator(const char* text, int state) {
     }
 
     // First, check built-in commands
-    while (builtin_idx < (sizeof(builtins)/sizeofo(char*)) - 1) {
+    while (builtin_idx < (sizeof(builtins)/sizeof(char*)) - 1) {
         const char* name = builtins[builtin_idx++];
         if (strncasecmp(text, name, strlen(text)) == 0) {
             return strdup(name);
