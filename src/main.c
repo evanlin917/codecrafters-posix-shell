@@ -932,7 +932,7 @@ char* command_generator(const char* text, int state) {
 
     const char* name;
     while ((name = builtins[list_idx++]) != NULL) {
-        if (strncmp(text, name, len) == 0) {
+        if (strncasecmp(text, name, len) == 0) {
             return strdup(name);        
         }
     }
@@ -948,7 +948,7 @@ char** builtin_completion(const char* text, int start, int end) {
 
 int main() {
     // Set up completion function
-    rl_attempted_completion_function - builtin_completion;
+    rl_attempted_completion_function = builtin_completion;
 
     // Flush after every printf for immediate output in interactive mode
     setbuf(stdout, NULL);
