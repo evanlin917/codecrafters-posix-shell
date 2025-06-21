@@ -922,19 +922,90 @@ void restore_stderr(int saved_stderr) {
 
 // Generator function for completion
 char* command_generator(const char* text, int state) {
-    static int list_idx;
-    static size_t len;
+    static int builtin_idx;
+    static int path_idx;
+    static DIR *dirp = NULL;
+    static char **path_dirs = NULL;
+    static int path_count = 0;
 
     if (!state) {
-        list_idx = 0;
-        len = strlen(text);
+        builtin_idx = 0;
+        path_idx = 0;
+        dirp = NULL
+
+        if (path_dirs) {
+            for (int i = 0; i < path_count; i++) {
+                free(path_dirs[i]);
+            }
+            free(path_dirs);
+            path_dirs = NULL;
+            path_count = 0;
+        }
+
+        char* path = getenv("PATH");
+        if (path) {
+            char* copy = strdup(path);
+            if (copy) {
+                char* token;
+                int count = 0;
+                char* saveptr = NULL;
+
+                token = strtok_r(copy, ":", &saveptr);
+                while(token) {
+                    count++;
+                    token = strtok_r(NULL, ":", &saveptr);
+                }
+
+                path_dirs = malloc(count * sizeof(char*));
+                if (path_dirs) {
+                    strcpy(copy, path);
+                    saveptr = NULL;
+                    token = strtok_r(copy, ":", &saveptr);
+                    int i = 0;
+                    while(token) {
+                        path_dirs[i] = strdup(token);
+                        token = strtok_r(NULL, ":", &saveptr);
+                        i++;
+                    }
+                    path_count = count;
+                }
+                free(copy);
+            }
+        }
     }
 
-    const char* name;
-    while ((name = builtins[list_idx++]) != NULL) {
-        if (strncasecmp(text, name, len) == 0) {
-            return strdup(name);        
+    // First, check built-in commands
+    while (builtin_idx < (sizeof(builtins)/sizeofo(char*)) - 1) {
+        const char* name = builtins[builtin_idx++];
+        if (strncasecmp(text, name, strlen(text)) == 0) {
+            return strdup(name);
         }
+    }
+
+    while (path_idx < path_count) {
+        if (!dirp) {
+            dirp = opendir(path_dirs[path_idx]);
+            if (!dirp) {
+                path_idx++;
+                continue;
+            }
+        }
+
+        struct dirent* entry;
+        while ((entry = readdir(dirp))) {
+            if (strncmp(text, entry->d_name, strlen(text)) == 0) {
+                char full_path[PATH_MAX];
+                snprintf(full_path, sizeof(full_path), "%s/%s", path_dirs[path_idx], entry->d_name);
+
+                if (access(full_path, X_OK) == 0) {
+                    return strdup(entry->d_name);
+                }
+            }
+        }
+
+        closedir(dirp);
+        dirp = NULL;
+        path_idx++;
     }
 
     return NULL;
