@@ -99,6 +99,27 @@ void free_argv(char** argv) {
     free(argv);
 }
 
+// Helper function to finalize an argument: take content from buffer, add to argv
+// and reset buffer. Returns 0 on success, -1 on error.
+static int finalize_argument(ArgBuffer* buf, char** argv, int* argc_ptr) {
+    if (buf->length > 0) {
+        if (*argc_ptr >= MAX_ARGS - 1) {
+            fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+            return -1;
+        }
+        argv[*argc_ptr] = strdup(buf->buffer);
+        if (!argv[*argc_ptr]) {
+            perror("parse_arguments: strdup failed");
+            return -1;
+        }
+        (*argc_ptr)++;
+        buf->length = 0;
+        buf->buffer[0] = '\0';
+    }
+    return 0;
+}
+
+
 // Helper function to parse entire input line into individual arguments.
 char** parse_arguments(const char* input_line) {
     char** argv = malloc(MAX_ARGS * sizeof(char*));
@@ -207,233 +228,113 @@ char** parse_arguments(const char* input_line) {
                 state.in_double_quote = 1; // Enter double quote (don't add quote to buffer)
                 i++;
             }
-            // --- Unified and Prioritized Tokenization Logic ---
-            else {
-                // If we have content in the buffer, finalize it as an argument
-                // This check is now integrated *into* the delimiter/operator handling
-                // to prevent premature argument finalization.
+            // --- REVISED PARSING LOGIC FOR NON-QUOTED CHARACTERS/TOKENS ---
+            // The logic for finalizing an argument should *only* happen when a new token
+            // boundary (space, operator) is detected.
 
-                // Now, handle the current character(s)
-                // Check for compound operators first (longest match principle)
-                if ((i + 1 < strlen(input_line)) && input_line[i+1] == '>') { // Potential multi-char redir
-                    if (current_char == '>') { // Found a ">>"
-                        if (current_arg_buffer->length > 0) { // Finalize existing arg
-                            if (argc >= MAX_ARGS - 1) {
-                                fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                                free_arg_buffer(current_arg_buffer);
-                                free_argv(argv);
-                                return NULL;
-                            }
-                            argv[argc] = strdup(current_arg_buffer->buffer);
-                            if (!argv[argc]) {
-                                perror("parse_arguments: strdup failed");
-                                free_arg_buffer(current_arg_buffer);
-                                free_argv(argv);
-                                return NULL;
-                            }
-                            argc++;
-                            current_arg_buffer->length = 0;
-                            current_arg_buffer->buffer[0] = '\0';
-                        }
-                        if (argc >= MAX_ARGS - 1) { // Error check for adding the ">>" token itself
-                            fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                            free_arg_buffer(current_arg_buffer);
-                            free_argv(argv);
-                            return NULL;
-                        }
-                        argv[argc] = strdup(">>");
-                        if (!argv[argc]) {
-                            perror("parse_arguments: strdup failed for '>>'");
-                            free_arg_buffer(current_arg_buffer);
-                            free_argv(argv);
-                            return NULL;
-                        }
-                        argc++;
-                        i += 2; // Consume both '>'
-                    } else if (current_char == '1' || current_char == '2') { // Potential "1>>" or "2>>"
-                        if ((i + 2 < strlen(input_line)) && input_line[i+2] == '>') { // Confirmed "1>>" or "2>>"
-                            if (current_arg_buffer->length > 0) { // Finalize existing arg
-                                if (argc >= MAX_ARGS - 1) {
-                                    fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                                    free_arg_buffer(current_arg_buffer);
-                                    free_argv(argv);
-                                    return NULL;
-                                }
-                                argv[argc] = strdup(current_arg_buffer->buffer);
-                                if (!argv[argc]) {
-                                    perror("parse_arguments: strdup failed");
-                                    free_arg_buffer(current_arg_buffer);
-                                    free_argv(argv);
-                                    return NULL;
-                                }
-                                argc++;
-                                current_arg_buffer->length = 0;
-                                current_arg_buffer->buffer[0] = '\0';
-                            }
-                            if (argc >= MAX_ARGS - 1) { // Error check for adding the "1>>" or "2>>" token itself
-                                fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                                free_arg_buffer(current_arg_buffer);
-                                free_argv(argv);
-                                return NULL;
-                            }
-                            char compound_redir[4]; // "1>>\0" or "2>>\0"
-                            compound_redir[0] = current_char;
-                            compound_redir[1] = '>';
-                            compound_redir[2] = '>';
-                            compound_redir[3] = '\0';
-                            argv[argc] = strdup(compound_redir);
-                            if (!argv[argc]) {
-                                perror("parse_arguments: strdup failed for '1>>'/'2>>'");
-                                free_arg_buffer(current_arg_buffer);
-                                free_argv(argv);
-                                return NULL;
-                            }
-                            argc++;
-                            i += 3; // Consume digit and two '>'
-                        } else { // It's "1>" or "2>" (not "1>>" or "2>>") - fall through to single operators
-                            if (current_arg_buffer->length > 0) { // Finalize existing arg
-                                if (argc >= MAX_ARGS - 1) {
-                                    fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                                    free_arg_buffer(current_arg_buffer);
-                                    free_argv(argv);
-                                    return NULL;
-                                }
-                                argv[argc] = strdup(current_arg_buffer->buffer);
-                                if (!argv[argc]) {
-                                    perror("parse_arguments: strdup failed");
-                                    free_arg_buffer(current_arg_buffer);
-                                    free_argv(argv);
-                                    return NULL;
-                                }
-                                argc++;
-                                current_arg_buffer->length = 0;
-                                current_arg_buffer->buffer[0] = '\0';
-                            }
-                            // Now process the `1>` or `2>` as a single operator
-                            if (argc >= MAX_ARGS - 1) {
-                                fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                                free_arg_buffer(current_arg_buffer);
-                                free_argv(argv);
-                                return NULL;
-                            }
-                            char compound_redir[3];
-                            compound_redir[0] = current_char;
-                            compound_redir[1] = '>';
-                            compound_redir[2] = '\0';
-                            argv[argc] = strdup(compound_redir);
-                            if (!argv[argc]) {
-                                perror("parse_arguments: strdup failed for '1>'/'2>'");
-                                free_arg_buffer(current_arg_buffer);
-                                free_argv(argv);
-                                return NULL;
-                            }
-                            argc++;
-                            i += 2; // Consume both the digit and the '>'
-                        }
-                    } else { // current_char is not '>', '1', or '2', but next is '>'. E.g., 'A>' in `echo A>b`
-                        // Fall through to general character or single operator
-                        if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
-                            free_arg_buffer(current_arg_buffer);
-                            free_argv(argv);
-                            return NULL;
-                        }
-                        i++;
+            // Handle compound operators first (longest match principle)
+            else if ((i + 1 < strlen(input_line)) && input_line[i+1] == '>') { // Potential multi-char redir
+                if (current_char == '>') { // Found a ">>"
+                    if (finalize_argument(current_arg_buffer, argv, &argc) < 0) {
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
-                }
-                // Check for single operators like >, <, |
-                else if (current_char == '>' || current_char == '<' || current_char == '|') {
-                    if (current_arg_buffer->length > 0) { // Finalize existing arg
-                        if (argc >= MAX_ARGS - 1) {
-                            fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                            free_arg_buffer(current_arg_buffer);
-                            free_argv(argv);
-                            return NULL;
-                        }
-                        argv[argc] = strdup(current_arg_buffer->buffer);
-                        if (!argv[argc]) {
-                            perror("parse_arguments: strdup failed");
-                            free_arg_buffer(current_arg_buffer);
-                            free_argv(argv);
-                            return NULL;
-                        }
-                        argc++;
-                        current_arg_buffer->length = 0;
-                        current_arg_buffer->buffer[0] = '\0';
-                    }
-                    if (argc >= MAX_ARGS - 1) { // Error check for adding the single operator token itself
+                    if (argc >= MAX_ARGS - 1) { // Error check for adding the ">>" token itself
                         fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
-                    char temp_char_str[2];
-                    temp_char_str[0] = current_char;
-                    temp_char_str[1] = '\0';
-                    argv[argc] = strdup(temp_char_str);
-                    if (!argv[argc]) {
-                        perror("parse_arguments: strdup failed for single operator");
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
-                    }
+                    argv[argc] = strdup(">>");
+                    if (!argv[argc]) { perror("parse_arguments: strdup failed for '>>'"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
                     argc++;
-                    i++; // Consume the single character
-                }
-                // Check for whitespace (always separates arguments)
-                else if (isspace((unsigned char)current_char)) {
-                    if (current_arg_buffer->length > 0) { // Finalize existing arg
+                    i += 2; // Consume both '>'
+                } else if (current_char == '1' || current_char == '2') { // Potential "1>>" or "2>>"
+                    if ((i + 2 < strlen(input_line)) && input_line[i+2] == '>') { // Confirmed "1>>" or "2>>"
+                        if (finalize_argument(current_arg_buffer, argv, &argc) < 0) {
+                            free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                        }
+                        if (argc >= MAX_ARGS - 1) { // Error check for adding the "1>>" or "2>>" token itself
+                            fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                            free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                        }
+                        char compound_redir[4]; // "1>>\0" or "2>>\0"
+                        compound_redir[0] = current_char;
+                        compound_redir[1] = '>';
+                        compound_redir[2] = '>';
+                        compound_redir[3] = '\0';
+                        argv[argc] = strdup(compound_redir);
+                        if (!argv[argc]) { perror("parse_arguments: strdup failed for '1>>'/'2>>'"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                        argc++;
+                        i += 3; // Consume digit and two '>'
+                    } else { // It's "1>" or "2>" (not "1>>" or "2>>") - fall through to single operators
+                        if (finalize_argument(current_arg_buffer, argv, &argc) < 0) {
+                            free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                        }
+                        // Now process the `1>` or `2>` as a single operator
                         if (argc >= MAX_ARGS - 1) {
                             fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                            free_arg_buffer(current_arg_buffer);
-                            free_argv(argv);
-                            return NULL;
+                            free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                         }
-                        argv[argc] = strdup(current_arg_buffer->buffer);
-                        if (!argv[argc]) {
-                            perror("parse_arguments: strdup failed");
-                            free_arg_buffer(current_arg_buffer);
-                            free_argv(argv);
-                            return NULL;
-                        }
+                        char compound_redir[3];
+                        compound_redir[0] = current_char;
+                        compound_redir[1] = '>';
+                        compound_redir[2] = '\0';
+                        argv[argc] = strdup(compound_redir);
+                        if (!argv[argc]) { perror("parse_arguments: strdup failed for '1>'/'2>'"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
                         argc++;
-                        current_arg_buffer->length = 0;
-                        current_arg_buffer->buffer[0] = '\0';
+                        i += 2; // Consume both the digit and the '>'
                     }
-                    i++; // Consume the space
-                    // Skip subsequent whitespace
-                    while (isspace((unsigned char)input_line[i])) {
-                        i++;
-                    }
-                }
-                // If not a special character, add to current argument buffer (regular character)
-                else {
+                } else { // current_char is not '>', '1', or '2', but next is '>'.
+                    // Example: `foo>` where `current_char` is `o`, next is `>`.
+                    // This implies `current_char` is part of a regular argument being built.
+                    // This block should thus behave like a 'regular character' block.
                     if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
+                        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
                     }
                     i++;
                 }
+            }
+            // Check for single operators like >, <, |
+            else if (current_char == '>' || current_char == '<' || current_char == '|') {
+                if (finalize_argument(current_arg_buffer, argv, &argc) < 0) {
+                    free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                }
+                if (argc >= MAX_ARGS - 1) { // Error check for adding the single operator token itself
+                    fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                    free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                }
+                char temp_char_str[2];
+                temp_char_str[0] = current_char;
+                temp_char_str[1] = '\0';
+                argv[argc] = strdup(temp_char_str);
+                if (!argv[argc]) { perror("parse_arguments: strdup failed for single operator"); free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL; }
+                argc++;
+                i++; // Consume the single character
+            }
+            // Check for whitespace (always separates arguments)
+            else if (isspace((unsigned char)current_char)) {
+                if (finalize_argument(current_arg_buffer, argv, &argc) < 0) {
+                    free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
+                }
+                i++; // Consume the space
+                // Skip subsequent whitespace
+                while (isspace((unsigned char)input_line[i])) {
+                    i++;
+                }
+            }
+            // If not a special character, add to current argument buffer (regular character)
+            else {
+                if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
+                    free_arg_buffer(current_arg_buffer);
+                    free_argv(argv);
+                    return NULL;
+                }
+                i++;
             }
         }
     }
 
     // After loop, add any remaining content in the buffer as the last argument
-    if (current_arg_buffer->length > 0) {
-        if (argc >= MAX_ARGS - 1) {
-            fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-            free_arg_buffer(current_arg_buffer);
-            free_argv(argv);
-            return NULL;
-        }
-        argv[argc] = strdup(current_arg_buffer->buffer);
-        if (!argv[argc]) {
-            perror("parse_arguments: strdup failed for final arg");
-            free_arg_buffer(current_arg_buffer);
-            free_argv(argv);
-            return NULL;
-        }
-        argc++;
+    if (finalize_argument(current_arg_buffer, argv, &argc) < 0) {
+        free_arg_buffer(current_arg_buffer); free_argv(argv); return NULL;
     }
     
     // Check for unterminated quotes at the end of the line
