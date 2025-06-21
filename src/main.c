@@ -443,7 +443,7 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
             return NULL;
         }
         result->redir_info->has_stdout_redirect = 1;
-        result->redir_info->stdout_file = strdup(all_args[redirect_stdout_idx]);
+        result->redir_info->stdout_file = strdup(all_args[redirect_stdout_idx + 1]);
         if (result->redir_info->stdout_file == NULL) {
             perror("parse_args_with_redirection: strdup failed for stdout filename");
             free_argv(all_args);
