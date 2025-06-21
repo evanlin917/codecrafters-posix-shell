@@ -49,13 +49,13 @@ ArgBuffer* init_arg_buffer() {
     }
 
     buf->capacity = ARG_SIZE;
-    buf->length = 0;
     buf->buffer = malloc(buf->capacity);
     if (!buf->buffer) {
         perror("init_arg_buffer: malloc failed for buffer");
         free(buf);
         return NULL;
     }
+    buf->length = 0;
     buf->buffer[0] = '\0'; // Null-terminate an empty string
 
     return buf;
@@ -210,30 +210,32 @@ char** parse_arguments(const char* input_line) {
             // --- Unified and Prioritized Tokenization Logic ---
             else {
                 // If we have content in the buffer, finalize it as an argument
-                if (current_arg_buffer->length > 0) {
-                    if (argc >= MAX_ARGS - 1) {
-                        fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
-                    }
-                    argv[argc] = strdup(current_arg_buffer->buffer);
-                    if (!argv[argc]) {
-                        perror("parse_arguments: strdup failed");
-                        free_arg_buffer(current_arg_buffer);
-                        free_argv(argv);
-                        return NULL;
-                    }
-                    argc++;
-                    current_arg_buffer->length = 0;
-                    current_arg_buffer->buffer[0] = '\0';
-                }
+                // This check is now integrated *into* the delimiter/operator handling
+                // to prevent premature argument finalization.
 
                 // Now, handle the current character(s)
                 // Check for compound operators first (longest match principle)
                 if ((i + 1 < strlen(input_line)) && input_line[i+1] == '>') { // Potential multi-char redir
                     if (current_char == '>') { // Found a ">>"
-                        if (argc >= MAX_ARGS - 1) {
+                        if (current_arg_buffer->length > 0) { // Finalize existing arg
+                            if (argc >= MAX_ARGS - 1) {
+                                fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                                free_arg_buffer(current_arg_buffer);
+                                free_argv(argv);
+                                return NULL;
+                            }
+                            argv[argc] = strdup(current_arg_buffer->buffer);
+                            if (!argv[argc]) {
+                                perror("parse_arguments: strdup failed");
+                                free_arg_buffer(current_arg_buffer);
+                                free_argv(argv);
+                                return NULL;
+                            }
+                            argc++;
+                            current_arg_buffer->length = 0;
+                            current_arg_buffer->buffer[0] = '\0';
+                        }
+                        if (argc >= MAX_ARGS - 1) { // Error check for adding the ">>" token itself
                             fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
                             free_arg_buffer(current_arg_buffer);
                             free_argv(argv);
@@ -250,7 +252,25 @@ char** parse_arguments(const char* input_line) {
                         i += 2; // Consume both '>'
                     } else if (current_char == '1' || current_char == '2') { // Potential "1>>" or "2>>"
                         if ((i + 2 < strlen(input_line)) && input_line[i+2] == '>') { // Confirmed "1>>" or "2>>"
-                            if (argc >= MAX_ARGS - 1) {
+                            if (current_arg_buffer->length > 0) { // Finalize existing arg
+                                if (argc >= MAX_ARGS - 1) {
+                                    fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                                    free_arg_buffer(current_arg_buffer);
+                                    free_argv(argv);
+                                    return NULL;
+                                }
+                                argv[argc] = strdup(current_arg_buffer->buffer);
+                                if (!argv[argc]) {
+                                    perror("parse_arguments: strdup failed");
+                                    free_arg_buffer(current_arg_buffer);
+                                    free_argv(argv);
+                                    return NULL;
+                                }
+                                argc++;
+                                current_arg_buffer->length = 0;
+                                current_arg_buffer->buffer[0] = '\0';
+                            }
+                            if (argc >= MAX_ARGS - 1) { // Error check for adding the "1>>" or "2>>" token itself
                                 fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
                                 free_arg_buffer(current_arg_buffer);
                                 free_argv(argv);
@@ -270,16 +290,47 @@ char** parse_arguments(const char* input_line) {
                             }
                             argc++;
                             i += 3; // Consume digit and two '>'
-                        } else { // It's "1>" or "2>" (not "1>>" or "2>>")
-                             // This case will be handled by the next `else if` for single `>` after digit
-                            if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
+                        } else { // It's "1>" or "2>" (not "1>>" or "2>>") - fall through to single operators
+                            if (current_arg_buffer->length > 0) { // Finalize existing arg
+                                if (argc >= MAX_ARGS - 1) {
+                                    fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                                    free_arg_buffer(current_arg_buffer);
+                                    free_argv(argv);
+                                    return NULL;
+                                }
+                                argv[argc] = strdup(current_arg_buffer->buffer);
+                                if (!argv[argc]) {
+                                    perror("parse_arguments: strdup failed");
+                                    free_arg_buffer(current_arg_buffer);
+                                    free_argv(argv);
+                                    return NULL;
+                                }
+                                argc++;
+                                current_arg_buffer->length = 0;
+                                current_arg_buffer->buffer[0] = '\0';
+                            }
+                            // Now process the `1>` or `2>` as a single operator
+                            if (argc >= MAX_ARGS - 1) {
+                                fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
                                 free_arg_buffer(current_arg_buffer);
                                 free_argv(argv);
                                 return NULL;
                             }
-                            i++;
+                            char compound_redir[3];
+                            compound_redir[0] = current_char;
+                            compound_redir[1] = '>';
+                            compound_redir[2] = '\0';
+                            argv[argc] = strdup(compound_redir);
+                            if (!argv[argc]) {
+                                perror("parse_arguments: strdup failed for '1>'/'2>'");
+                                free_arg_buffer(current_arg_buffer);
+                                free_argv(argv);
+                                return NULL;
+                            }
+                            argc++;
+                            i += 2; // Consume both the digit and the '>'
                         }
-                    } else { // Next char is '>', but current is not '>', '1', or '2'. E.g., 'A>' in `echo A>b`
+                    } else { // current_char is not '>', '1', or '2', but next is '>'. E.g., 'A>' in `echo A>b`
                         // Fall through to general character or single operator
                         if (add_char_to_buffer(current_arg_buffer, current_char) < 0) {
                             free_arg_buffer(current_arg_buffer);
@@ -291,7 +342,25 @@ char** parse_arguments(const char* input_line) {
                 }
                 // Check for single operators like >, <, |
                 else if (current_char == '>' || current_char == '<' || current_char == '|') {
-                    if (argc >= MAX_ARGS - 1) {
+                    if (current_arg_buffer->length > 0) { // Finalize existing arg
+                        if (argc >= MAX_ARGS - 1) {
+                            fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                            free_arg_buffer(current_arg_buffer);
+                            free_argv(argv);
+                            return NULL;
+                        }
+                        argv[argc] = strdup(current_arg_buffer->buffer);
+                        if (!argv[argc]) {
+                            perror("parse_arguments: strdup failed");
+                            free_arg_buffer(current_arg_buffer);
+                            free_argv(argv);
+                            return NULL;
+                        }
+                        argc++;
+                        current_arg_buffer->length = 0;
+                        current_arg_buffer->buffer[0] = '\0';
+                    }
+                    if (argc >= MAX_ARGS - 1) { // Error check for adding the single operator token itself
                         fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
                         free_arg_buffer(current_arg_buffer);
                         free_argv(argv);
@@ -312,6 +381,24 @@ char** parse_arguments(const char* input_line) {
                 }
                 // Check for whitespace (always separates arguments)
                 else if (isspace((unsigned char)current_char)) {
+                    if (current_arg_buffer->length > 0) { // Finalize existing arg
+                        if (argc >= MAX_ARGS - 1) {
+                            fprintf(stderr, "parse_arguments: too many arguments (max %d)\n", MAX_ARGS - 1);
+                            free_arg_buffer(current_arg_buffer);
+                            free_argv(argv);
+                            return NULL;
+                        }
+                        argv[argc] = strdup(current_arg_buffer->buffer);
+                        if (!argv[argc]) {
+                            perror("parse_arguments: strdup failed");
+                            free_arg_buffer(current_arg_buffer);
+                            free_argv(argv);
+                            return NULL;
+                        }
+                        argc++;
+                        current_arg_buffer->length = 0;
+                        current_arg_buffer->buffer[0] = '\0';
+                    }
                     i++; // Consume the space
                     // Skip subsequent whitespace
                     while (isspace((unsigned char)input_line[i])) {
@@ -340,7 +427,7 @@ char** parse_arguments(const char* input_line) {
             return NULL;
         }
         argv[argc] = strdup(current_arg_buffer->buffer);
-        if (!argv[argc]) { // Changed from !argv to !argv[argc] - this was a potential bug
+        if (!argv[argc]) {
             perror("parse_arguments: strdup failed for final arg");
             free_arg_buffer(current_arg_buffer);
             free_argv(argv);
@@ -404,7 +491,7 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
 
     char** all_args = parse_arguments(input_line);
     if (!all_args) {
-        free_redirection_info(result->redir_info); // redir_info exists even if parse_arguments fails
+        free_redirection_info(result->redir_info); // redir_info exists even if parse_arguments failed
         free(result);
         return NULL;
     }
@@ -425,21 +512,30 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
             // Check for conflicts with other stdout redirections
             if (redirect_stdout_idx != -1 || redirect_append_stdout_idx != -1) {
                 fprintf(stderr, "shell: syntax error: multiple stdout redirections\n");
-                goto error_cleanup_parse_redir;
+                free_argv(all_args);
+                free_redirection_info(result->redir_info);
+                free(result);
+                return NULL;
             }
             redirect_stdout_idx = i;
         } else if (strcmp(all_args[i], ">>") == 0 || strcmp(all_args[i], "1>>") == 0) { // NEW: Handle append
             // Check for conflicts with other stdout redirections
             if (redirect_stdout_idx != -1 || redirect_append_stdout_idx != -1) {
                 fprintf(stderr, "shell: syntax error: multiple stdout redirections\n");
-                goto error_cleanup_parse_redir;
+                free_argv(all_args);
+                free_redirection_info(result->redir_info);
+                free(result);
+                return NULL;
             }
             redirect_append_stdout_idx = i;
         } else if (strcmp(all_args[i], "2>") == 0) {
             // Check for conflicts with other stderr redirections
             if (redirect_stderr_idx != -1 || redirect_append_stderr_idx != -1) { // Check for future 2>>
                 fprintf(stderr, "shell: syntax error: multiple stderr redirections\n");
-                goto error_cleanup_parse_redir;
+                free_argv(all_args);
+                free_redirection_info(result->redir_info);
+                free(result);
+                return NULL;
             }
             redirect_stderr_idx = i;
         }
@@ -468,13 +564,19 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
 
         if (actual_redirect_operator_idx + 1 >= total_args || all_args[actual_redirect_operator_idx + 1] == NULL) {
             fprintf(stderr, "shell: syntax error: expected filename after stdout redirection\n");
-            goto error_cleanup_parse_redir;
+            free_argv(all_args);
+            free_redirection_info(result->redir_info);
+            free(result);
+            return NULL;
         }
         result->redir_info->has_stdout_redirect = 1;
         result->redir_info->stdout_file = strdup(all_args[actual_redirect_operator_idx + 1]); // Corrected this line in previous turn
         if (!result->redir_info->stdout_file) {
             perror("parse_args_with_redirection: strdup failed for stdout filename");
-            goto error_cleanup_parse_redir;
+            free_argv(all_args);
+            free_redirection_info(result->redir_info);
+            free(result);
+            return NULL;
         }
         // Set append flag if the operator was an append one
         if (redirect_append_stdout_idx != -1) {
@@ -486,13 +588,19 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
     if (redirect_stderr_idx != -1) {
         if (redirect_stderr_idx + 1 >= total_args || all_args[redirect_stderr_idx + 1] == NULL) {
             fprintf(stderr, "shell: syntax error: expected filename after stderr redirection\n");
-            goto error_cleanup_parse_redir;
+            free_argv(all_args);
+            free_redirection_info(result->redir_info);
+            free(result);
+            return NULL;
         }
         result->redir_info->has_stderr_redirect = 1;
         result->redir_info->stderr_file = strdup(all_args[redirect_stderr_idx + 1]);
         if (!result->redir_info->stderr_file) {
             perror("parse_args_with_redirection: strdup failed for stderr filename");
-            goto error_cleanup_parse_redir;
+            free_argv(all_args);
+            free_redirection_info(result->redir_info);
+            free(result);
+            return NULL;
         }
         // Assuming 2> is always truncating for now; set is_stderr_append if 2>> is added
         // result->redir_info->is_stderr_append = 0;
@@ -502,7 +610,10 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
     result->argv = malloc((argv_end_idx + 1) * sizeof(char*));
     if (!result->argv) {
         perror("parse_args_with_redirection: malloc failed for result argv");
-        goto error_cleanup_parse_redir;
+        free_argv(all_args);
+        free_redirection_info(result->redir_info);
+        free(result);
+        return NULL;
     }
 
     for (int i = 0; i < argv_end_idx; i++) {
@@ -513,7 +624,10 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
                 free(result->argv[j]);
             }
             free(result->argv); // Free partial argv
-            goto error_cleanup_parse_redir;
+            free_argv(all_args);
+            free_redirection_info(result->redir_info);
+            free(result);
+            return NULL;
         }
     }
     result->argv[argv_end_idx] = NULL; // Null-terminate the command's argv
@@ -521,12 +635,6 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
     free_argv(all_args); // all_args is copied, so free the original array and its contents
     
     return result;
-
-error_cleanup_parse_redir: // Centralized error handling for parse_args_with_redirection
-    free_argv(all_args); // all_args might be NULL if parse_arguments failed, free_argv handles this
-    free_redirection_info(result->redir_info); // redir_info might be NULL if init_redirection_info failed
-    free(result); // result might be NULL if malloc failed at the start
-    return NULL;
 }
 
 // Helper function to free parse result
@@ -714,10 +822,10 @@ void execute_external_exe_with_redirection(const char* exePath, char* argv[], Re
         // Redirect STDOUT if specified
         if (redir_info->has_stdout_redirect) {
             int open_flags = O_WRONLY | O_CREAT;
-            if (redir_info->is_stdout_append) { // NEW: Check for append mode
-                open_flags |= O_APPEND; // Add O_APPEND
+            if (redir_info->is_stdout_append) {
+                open_flags |= O_APPEND;
             } else {
-                open_flags |= O_TRUNC; // Otherwise, use O_TRUNC (default for '>')
+                open_flags |= O_TRUNC;
             }
 
             int fd = open(redir_info->stdout_file, open_flags, 0644);
@@ -736,9 +844,8 @@ void execute_external_exe_with_redirection(const char* exePath, char* argv[], Re
 
         // Redirect STDERR if specified
         if (redir_info->has_stderr_redirect) {
-            // Assuming 2> is always truncating for now; if 2>> is implemented, add check here
-            int open_flags_stderr = O_WRONLY | O_CREAT | O_TRUNC; 
-            if (redir_info->is_stderr_append) { // Check for stderr append
+            int open_flags_stderr = O_WRONLY | O_CREAT; 
+            if (redir_info->is_stderr_append) {
                 open_flags_stderr |= O_APPEND;
             } else {
                 open_flags_stderr |= O_TRUNC;
@@ -770,7 +877,7 @@ void execute_external_exe_with_redirection(const char* exePath, char* argv[], Re
 }
 
 // Helper function to setup stdout redirection (for built-ins)
-int setup_stdout_redirection(const char* filename, int is_append) { // Added is_append parameter
+int setup_stdout_redirection(const char* filename, int is_append) {
     int open_flags = O_WRONLY | O_CREAT;
     if (is_append) {
         open_flags |= O_APPEND;
@@ -811,7 +918,7 @@ void restore_stdout(int saved_stdout) {
 }
 
 // Helper function to setup stderr redirection (for built-ins)
-int setup_stderr_redirection(const char* filename, int is_append) { // Added is_append parameter
+int setup_stderr_redirection(const char* filename, int is_append) {
     int open_flags = O_WRONLY | O_CREAT;
     if (is_append) {
         open_flags |= O_APPEND;
@@ -957,7 +1064,7 @@ int main() {
                 execute_external_exe_with_redirection(exePath, parsed_result->argv, parsed_result->redir_info);
                 free(exePath);
             } else {
-                printf("%s: command not found\n", command); // Command not found goes to stderr
+                fprintf(stderr, "%s: command not found\n", command); // Command not found goes to stderr
             }
         }
 
