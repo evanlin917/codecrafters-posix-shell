@@ -6,10 +6,17 @@
 #include <sys/wait.h>
 #include <limits.h>
 #include <fcntl.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 #define BUF_SIZE 512
 #define MAX_ARGS 64
 #define ARG_SIZE 64
+
+// Define built-in commands for completion
+const char* builtins[] = {
+    "echo ", "exit ", "type ", "pwd ", "cd ", NULL
+};
 
 // Structure to hold parsing state (quoting)
 typedef struct {
@@ -913,30 +920,60 @@ void restore_stderr(int saved_stderr) {
     }
 }
 
+// Generator function for completion
+char* command_generator(const char* text, int state) {
+    static int list_idx;
+    static size_t len;
+
+    if (!state) {
+        list_idx = 0;
+        len = strlen(text);
+    }
+
+    const char* name;
+    while ((name = builtins[list_idx++]) != NULL) {
+        if (strncmp(text, name, len) == 0) {
+            return strdup(name);        
+        }
+    }
+
+    return NULL;
+}
+
+// Completion entry function
+char** builtin_completion(const char* text, int start, int end) {
+    rl_attempted_completion_over = 1;
+    return rl_completion_matches(text, command_generator);
+}
+
 int main() {
+    // Set up completion function
+    rl_attempted_completion_function - builtin_completion;
+
     // Flush after every printf for immediate output in interactive mode
     setbuf(stdout, NULL);
     int status = 0;
 
     while (1) {
-        printf("$ ");
-
-        // Wait for user input
-        char input[BUF_SIZE];
-        char* shellInput = fgets(input, BUF_SIZE, stdin);
-
-        if (shellInput == NULL) {
+        char* input = readline("$ ");
+        if (input == NULL) {
             printf("\n");
             break;
         }
 
-        // Remove trailing newline
-        size_t inputLen = strlen(input);
-        if (inputLen > 0 && input[inputLen - 1] == '\n') {
-            input[inputLen - 1] = '\0';
+        char* processedInput = input;
+        while (isspace((unsigned char)*processedInput)) {
+            processedInput++;
         }
 
-        char* processedInput = input;
+        // Skip empty commands
+        if (*processedInput == '\0') {
+            free(input);
+            continue;
+        }
+
+        // Add non-empty commands to history
+        add_history(input);
 
         // Parse the entire line into arguments
         ParseResult* parsed_result = parse_args_with_redirection(processedInput);
@@ -1024,6 +1061,7 @@ int main() {
             }
         }
 
+        free(input);
         free_parse_result(parsed_result);
     }
 
