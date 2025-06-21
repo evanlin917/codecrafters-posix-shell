@@ -778,7 +778,7 @@ int setup_stderr_redirection(const char* filename) {
     if (dup2(fd, STDERR_FILENO) == -1) {
         perror("dup2");
         close(fd);
-        clsoe(saved_stderr);
+        close(saved_stderr);
         return -1;
     }
 
