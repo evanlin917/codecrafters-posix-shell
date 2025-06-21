@@ -593,9 +593,6 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
             i++;
             continue;
         }
-        if ((redirect_stdout_idx != -1 && i == redirect_stderr_idx + 1) || (redirect_stderr_idx != -1 && i == redirect_stderr_idx + 1)) {
-            continue;
-        }
         result->argv[argc] = strdup(all_args[i]);
         if (result->argv[argc] == NULL) {
             perror("parse_args_with_redirection: strdup failed for command arg");
