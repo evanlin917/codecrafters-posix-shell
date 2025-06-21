@@ -15,7 +15,7 @@
 
 // Define built-in commands for completion
 const char* builtins[] = {
-    "echo ", "exit ", "type ", "pwd ", "cd ", NULL
+    "echo", "exit", "type", "pwd", "cd", NULL
 };
 
 // Structure to hold parsing state (quoting)
@@ -947,8 +947,13 @@ char** builtin_completion(const char* text, int start, int end) {
 }
 
 int main() {
+    // Initialize readline
+    rl_readline_name = "myshell";
+    rl_basic_word_break_chars = " \t\n\"\'`@$><=;|&{(";
+
     // Set up completion function
     rl_attempted_completion_function = builtin_completion;
+    rl_completion_append_character = ' ';
 
     // Flush after every printf for immediate output in interactive mode
     setbuf(stdout, NULL);
