@@ -1321,8 +1321,8 @@ int main() {
             if (strcmp(command, "exit") == 0) {
                 status = handle_exit_cmd(parsed_result->argv);
                 free_parse_result(parsed_result);
-                free(input);
                 free_argv(tokens);
+                free(input);
                 break;
             } else if (
                 strcmp(command, "echo") == 0 ||
@@ -1363,10 +1363,10 @@ int main() {
                 }
             }
             free_parse_result(parsed_result);
+            free_arv(tokens);
         }
 
         free(input);
-        free_argv(tokens);
     }
 
     return status;
