@@ -762,6 +762,56 @@ void handle_cd_cmd(char** argv) {
 // Global variable keeping track of last written history index.
 static int last_history_written_idx = 0;
 
+// Helper function to load history from file
+static void load_history_from_file(const char* filename) {
+    FILE* fp = fopen(filename, "r");
+    if (fp == NULL) {
+        perror("history");
+        return;
+    }
+
+    char* line = NULL;
+    size_t len = 0;
+    ssize_t read;
+
+    while ((read = getline(&line, &len, fp)) != -1) {
+        if (read > 0 && line[read-1] == '\n') {
+            line[read-1] = '\0';
+            read--;
+        }
+
+        if (read <= 0 || strlen(line) == 0) {
+            continue;
+        }
+
+        add_history(line);
+    }
+
+    free(line);
+    fclose(fp);
+}
+
+// Helper function to save history to a file
+static void save_history_to_file(const char* filename) {
+    FILE* fp = fopen(filename, "w");
+    if (fp == NULL) {
+        perror("history");
+        return;
+    }
+
+    HIST_ENTRY** history_entries = history_list();
+    if (!history_entries) {
+        fclose(fp);
+        return;
+    }
+
+    for (int i = 0; history_entries[i] != NULL; i++) {
+        fprintf(fp, "%s\n", history_entries[i]->line);
+    }
+
+    fclose(fp);
+}
+
 // Helper function to handle `history` commands
 void handle_history_cmd(char** argv) {
     if (argv[1] != NULL && strcmp(argv[1], "-r") == 0) {
@@ -770,36 +820,7 @@ void handle_history_cmd(char** argv) {
             return;
         }
 
-        const char* filename = argv[2];
-        FILE* fp = fopen(filename, "r");
-        if (fp == NULL) {
-            perror("history");
-            return;
-        }
-
-        char* line = NULL;
-        size_t len = 0;
-        ssize_t read;
-
-        while ((read = getline(&line, &len, fp)) != -1) {
-            // Remove trailing newline
-            if (read > 0 && line[read-1] == '\n') {
-                line[read-1] = '\0';
-                read--;
-            }
-
-            // Skip empty lines
-            if (read <= 0 || strlen(line) == 0) {
-                continue;
-            }
-
-            // Add to history
-            add_history(line);
-        }
-
-        free(line);
-        fclose(fp);
-        last_history_written_idx = history_length;
+        load_history_from_file(argv[2]);
         return;
     }
     // Handle history -w <file> option: write history to file (overwrite)
@@ -809,24 +830,7 @@ void handle_history_cmd(char** argv) {
             return;
         }
 
-        const char* filename = argv[2];
-        FILE* fp = fopen(filename, "w");
-        if (fp == NULL) {
-            perror("history");
-            return;
-        }
-
-        HIST_ENTRY** history_entries = history_list();
-        if (!history_entries) {
-            fclose(fp);
-            return;
-        }
-
-        for (int i = 0; history_entries[i] != NULL; i++) {
-            fprintf(fp, "%s\n", history_entries[i]->line);
-        }
-
-        fclose(fp);
+        save_history_to_file(argv[2]);
         last_history_written_idx = history_length;
         return;
     }
@@ -1322,6 +1326,13 @@ int main() {
     rl_attempted_completion_function = builtin_completion;
     rl_completion_append_character = ' ';
 
+    // Load histoyr from HISTFILE if set
+    char* histfile = getenv("HISTFILE");
+    if (histfile != NULL) {
+        load_history_from_file(histfile);
+        last_history_written_idx = history_length;
+    }
+
     // Flush after every printf for immediate output in interactive mode
     setbuf(stdout, NULL);
     int status = 0;
@@ -1508,6 +1519,21 @@ int main() {
         }
 
         free(input);
+    }
+
+    // Save HISTFILE on exit
+    if (saved_histfile != NULL) {
+        // Re-check if current HISTFILE value
+        char* current_histfile = getenv("HISTFILE");
+
+        // Use saved_histfile if HISTFILE is unset or changed
+        if (current_histfile == NULL || strcmp(saved_histfile, current_histfile) != 0) {
+            save_history_to_file(saved_histfile)
+        } else {
+            save_history_to_file(current_histfile);
+        }
+
+        free(saved_histfile);
     }
 
     return status;
