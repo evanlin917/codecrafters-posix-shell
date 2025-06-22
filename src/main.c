@@ -774,7 +774,7 @@ void handle_history_cmd(char** argv) {
     int n = total_entries;
     if (argv[1] != NULL) {
         char* endptr;
-        long temp = strtol(argv[1], *endptr, 10);
+        long temp = strtol(argv[1], &endptr, 10);
 
         // Validate the argument
         if (*endptr != '\0' || temp <= 0) {
