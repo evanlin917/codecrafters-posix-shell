@@ -17,7 +17,7 @@
 
 // Define built-in commands for completion
 const char* builtins[] = {
-    "echo", "exit", "type", "pwd", "cd", NULL
+    "echo", "exit", "type", "pwd", "cd", "history", NULL
 };
 
 // Structure to hold parsing state (quoting)
@@ -666,7 +666,8 @@ void handle_type_cmd(char** argv) { // Now takes char** argv
             (strcmp(cmd_to_type, "exit") == 0) ||
             (strcmp(cmd_to_type, "type") == 0) ||
             (strcmp(cmd_to_type, "pwd") == 0) ||
-            (strcmp(cmd_to_type, "cd") == 0)
+            (strcmp(cmd_to_type, "cd") == 0) ||
+            (strcmp(cmd_to_type, "history") == 0)
         ) {
             printf("%s is a shell builtin\n", cmd_to_type);
             continue; // Check next argument
@@ -755,6 +756,20 @@ void handle_cd_cmd(char** argv) {
 
     if (chdir(target_path) != 0) {
         printf("cd: %s: No such file or directory\n", target_path);
+    }
+}
+
+// Helper function to handle `history` commands
+void handle_history_cmd() {
+    HIST_ENTRY** history_list = history_list();
+    if (!history_list) {
+        return;
+    }
+
+    int history_length = 0;
+    while (history_list[history_length] != NULL) {
+        printf("%5d %s\n", history_length + history_base, history_list[history_length]->line);
+        history_length++;
     }
 }
 
@@ -1134,6 +1149,9 @@ void execute_pipeline(ParseResult** segments, int n_segments) {
             } else if (strcmp(command, "cd") == 0) {
                 handle_cd_cmd(segments[i]->argv);
                 exit(0);
+            } else if (strcmp(command, "history") == 0) {
+                handle_history_cmd();
+                exit(0);
             } else {
                 char* exePath = find_exe_in_path(command);
                 if (exePath != NULL) {
@@ -1349,6 +1367,8 @@ int main() {
                     }
                 } else if (strcmp(command, "cd") == 0) {
                     handle_cd_cmd(parsed_result->argv);
+                } else if (strcmp(command, "history") == 0) {
+                    handle_history_cmd();
                 }
 
                 if (saved_stdout != -1) restore_stdout(saved_stdout);
