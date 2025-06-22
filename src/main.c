@@ -1363,7 +1363,7 @@ int main() {
                 }
             }
             free_parse_result(parsed_result);
-            free_arv(tokens);
+            free_argv(tokens);
         }
 
         free(input);
