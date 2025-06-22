@@ -822,7 +822,7 @@ void handle_history_cmd(char** argv) {
             return;
         }
 
-        for (int i = last_history_written_idx; history_entries[i] != NULL; i++) {
+        for (int i = 0; history_entries[i] != NULL; i++) {
             fprintf(fp, "%s\n", history_entries[i]->line);
         }
 
@@ -850,11 +850,12 @@ void handle_history_cmd(char** argv) {
             return;
         }
 
-        for (int i = 0; history_entries[i] != NULL; i++) {
+        for (int i = last_history_written_idx; history_entries[i] != NULL; i++) {
             fprintf(fp, "%s\n", history_entries[i]->line);
         }
 
         fclose(fp);
+        last_history_written_idx = history_length;
         return;
     }
     
