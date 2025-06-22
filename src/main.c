@@ -1159,13 +1159,13 @@ void execute_pipeline(ParseResult** segments, int n_segments) {
             if (i < n_segments - 1) {
                 prev_pipe[0] = next_pipe[0];
                 prev_pipe[1] = next_pipe[1];
+            } else {
+                // Close next_pipe if it exists for the last command
+                if (next_pipe[0] != -1) close(next_pipe[0]);
+                if (next_pipe[1] != -1) close(next_pipe[1]);
             }
         }
     }
-    
-    // Close any remaining pipe ends
-    if (prev_pipe[0] != -1) close(prev_pipe[0]);
-    if (prev_pipe[1] != -1) close(prev_pipe[1]);
     
     // Wait for all child processes
     for (int i = 0; i < n_segments; i++) {
