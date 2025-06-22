@@ -778,7 +778,7 @@ void handle_history_cmd(char** argv) {
         size_t len = 0;
         ssize_t read;
 
-        while ((read = getline(&lie, &len, fp)) != -1) {
+        while ((read = getline(&line, &len, fp)) != -1) {
             // Remove trailing newline
             if (read > 0 && line[read-1] == '\n') {
                 line[read-1] = '\0';
