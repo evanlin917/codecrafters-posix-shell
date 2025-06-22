@@ -1326,10 +1326,11 @@ int main() {
     rl_attempted_completion_function = builtin_completion;
     rl_completion_append_character = ' ';
 
-    // Load histoyr from HISTFILE if set
+    // Load history from HISTFILE if set
     char* histfile = getenv("HISTFILE");
-    if (histfile != NULL) {
-        load_history_from_file(histfile);
+    char* saved_histfile = histfile ? strdup(histfile) : NULL;
+    if (saved_histfile != NULL) {
+        load_history_from_file(saved_histfile);
         last_history_written_idx = history_length;
     }
 
@@ -1528,7 +1529,7 @@ int main() {
 
         // Use saved_histfile if HISTFILE is unset or changed
         if (current_histfile == NULL || strcmp(saved_histfile, current_histfile) != 0) {
-            save_history_to_file(saved_histfile)
+            save_history_to_file(saved_histfile);
         } else {
             save_history_to_file(current_histfile);
         }
