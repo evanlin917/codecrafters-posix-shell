@@ -766,7 +766,7 @@ void handle_history_cmd(char** argv) {
         return;
     }
 
-    int total_entries = 0
+    int total_entries = 0;
     while (history_entries[total_entries] != NULL) {
         total_entries++;
     }
