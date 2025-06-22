@@ -960,15 +960,17 @@ char* command_generator(const char* text, int state) {
 
                 path_dirs = malloc(count * sizeof(char*));
                 if (path_dirs) {
-                    strcpy(copy, path);
+                    // We need to tokenize again to copy each directory
+                    char* copy2 = strdup(path);
                     saveptr = NULL;
-                    token = strtok_r(copy, ":", &saveptr);
+                    token = strtok_r(copy2, ":", &saveptr);
                     int i = 0;
-                    while(token) {
+                    while(token && i < count) {
                         path_dirs[i] = strdup(token);
                         token = strtok_r(NULL, ":", &saveptr);
                         i++;
                     }
+                    free(copy2);
                     path_count = count;
                 }
                 free(copy);
@@ -977,7 +979,7 @@ char* command_generator(const char* text, int state) {
     }
 
     // First, check built-in commands
-    while (builtin_idx < (sizeof(builtins)/sizeof(char*)) - 1) {
+    while (builtin_idx < (int)(sizeof(builtins)/sizeof(char*)) - 1) {
         const char* name = builtins[builtin_idx++];
         if (strncasecmp(text, name, strlen(text)) == 0) {
             return strdup(name);
@@ -994,13 +996,14 @@ char* command_generator(const char* text, int state) {
         }
 
         struct dirent* entry;
-        while ((entry = readdir(dirp))) {
+        while ((entry = readdir(dirp)) != NULL) {
             if (strncmp(text, entry->d_name, strlen(text)) == 0) {
                 char full_path[PATH_MAX];
                 snprintf(full_path, sizeof(full_path), "%s/%s", path_dirs[path_idx], entry->d_name);
 
                 if (access(full_path, X_OK) == 0) {
-                    return strdup(entry->d_name);
+                    char* name_copy = strdup(entry->d_name);
+                    return name_copy;
                 }
             }
         }
@@ -1017,6 +1020,159 @@ char* command_generator(const char* text, int state) {
 char** builtin_completion(const char* text, int start, int end) {
     rl_attempted_completion_over = 1;
     return rl_completion_matches(text, command_generator);
+}
+
+// Helper function to split tokens by pipe operators
+char*** split_tokens_by_pipe(char** tokens, int* n_segments) {
+    int count = 1;
+    for (int i = 0; tokens[i] != NULL; i++) {
+        if (strcmp(tokens[i], "|") == 0) {
+            count++;
+        }
+    }
+    *n_segments = count;
+
+    char*** segments = malloc(count * sizeof(char**));
+    int seg_index = 0;
+    int start = 0;
+    int i = 0;
+    
+    while (1) {
+        if (tokens[i] == NULL || strcmp(tokens[i], "|") == 0) {
+            int seg_length = i - start;
+            segments[seg_index] = malloc((seg_length + 1) * sizeof(char*));
+            
+            for (int j = 0; j < seg_length; j++) {
+                segments[seg_index][j] = tokens[start + j];
+            }
+            segments[seg_index][seg_length] = NULL;
+            seg_index++;
+            start = i + 1;
+            
+            if (tokens[i] == NULL) break;
+        }
+        i++;
+    }
+    
+    return segments;
+}
+
+// Execute a pipeline of commands
+void execute_pipeline(ParseResult** segments, int n_segments) {
+    int prev_pipe[2] = {-1, -1};
+    int next_pipe[2] = {-1, -1};
+    pid_t* pids = malloc(n_segments * sizeof(pid_t));
+    
+    for (int i = 0; i < n_segments; i++) {
+        // Create new pipe if not last command
+        if (i < n_segments - 1) {
+            if (pipe(next_pipe) {
+                perror("pipe");
+                return;
+            }
+        }
+        
+        pid_t pid = fork();
+        if (pid == 0) { // Child process
+            // Connect to previous pipe (if exists)
+            if (i > 0) {
+                dup2(prev_pipe[0], STDIN_FILENO);
+                close(prev_pipe[0]);
+                close(prev_pipe[1]);
+            }
+            
+            // Connect to next pipe (if exists)
+            if (i < n_segments - 1) {
+                close(next_pipe[0]);
+                dup2(next_pipe[1], STDOUT_FILENO);
+                close(next_pipe[1]);
+            }
+            
+            // Handle redirection for this command
+            RedirectionInfo* redir = segments[i]->redir_info;
+            if (redir->has_stdout_redirect) {
+                int flags = O_WRONLY | O_CREAT;
+                flags |= (redir->stdout_mode == 1) ? O_APPEND : O_TRUNC;
+                int fd = open(redir->stdout_file, flags, 0644);
+                if (fd == -1) {
+                    perror("open stdout redirection file");
+                    exit(1);
+                }
+                dup2(fd, STDOUT_FILENO);
+                close(fd);
+            }
+            
+            if (redir->has_stderr_redirect) {
+                int flags = O_WRONLY | O_CREAT;
+                flags |= (redir->stderr_mode == 1) ? O_APPEND : O_TRUNC;
+                int fd = open(redir->stderr_file, flags, 0644);
+                if (fd == -1) {
+                    perror("open stderr redirection file");
+                    exit(1);
+                }
+                dup2(fd, STDERR_FILENO);
+                close(fd);
+            }
+            
+            // Execute built-in or external command
+            const char* command = segments[i]->argv[0];
+            if (strcmp(command, "echo") == 0) {
+                handle_echo_cmd(segments[i]->argv);
+                exit(0);
+            } else if (strcmp(command, "exit") == 0) {
+                exit(handle_exit_cmd(segments[i]->argv));
+            } else if (strcmp(command, "type") == 0) {
+                handle_type_cmd(segments[i]->argv);
+                exit(0);
+            } else if (strcmp(command, "pwd") == 0) {
+                char* pwd = handle_pwd_cmd();
+                if (pwd != NULL) {
+                    printf("%s\n", pwd);
+                    free(pwd);
+                }
+                exit(0);
+            } else if (strcmp(command, "cd") == 0) {
+                handle_cd_cmd(segments[i]->argv);
+                exit(0);
+            } else {
+                char* exePath = find_exe_in_path(command);
+                if (exePath != NULL) {
+                    execv(exePath, segments[i]->argv);
+                    perror("execv failed");
+                    exit(1);
+                } else {
+                    fprintf(stderr, "%s: command not found\n", command);
+                    exit(1);
+                }
+            }
+        } else if (pid < 0) {
+            perror("fork");
+            return;
+        } else {
+            pids[i] = pid;
+            // Close previous pipe ends
+            if (i > 0) {
+                close(prev_pipe[0]);
+                close(prev_pipe[1]);
+            }
+            // Set up for next iteration
+            if (i < n_segments - 1) {
+                prev_pipe[0] = next_pipe[0];
+                prev_pipe[1] = next_pipe[1];
+            }
+        }
+    }
+    
+    // Close any remaining pipe ends
+    if (prev_pipe[0] != -1) close(prev_pipe[0]);
+    if (prev_pipe[1] != -1) close(prev_pipe[1]);
+    
+    // Wait for all child processes
+    for (int i = 0; i < n_segments; i++) {
+        waitpid(pids[i], NULL, 0);
+    }
+    
+    free(pids);
 }
 
 int main() {
@@ -1053,94 +1209,164 @@ int main() {
         // Add non-empty commands to history
         add_history(input);
 
-        // Parse the entire line into arguments
-        ParseResult* parsed_result = parse_args_with_redirection(processedInput);
-
-        // Handle parsing errors (e.g., unterminated quotes)
-        if (parsed_result == NULL) {
-            continue; 
-        }
-
-        // If no command was parsed (e.g., input was just whitespace or empty after parsing)
-        if (parsed_result->argv[0] == NULL) {
-            free_parse_result(parsed_result);
+        // Parse the entire line into tokens
+        char** tokens = parse_arguments(processedInput);
+        if (tokens == NULL) {
+            free(input);
             continue;
         }
 
-        const char* command = parsed_result->argv[0];
-        int saved_stdout = -1;
-        int saved_stderr = -1;
-
-        if (strcmp(command, "exit") == 0) {
-            status = handle_exit_cmd(parsed_result->argv);
-            free_parse_result(parsed_result);
-            break;
-        } else if (
-            strcmp(command, "echo") == 0 ||
-            strcmp(command, "type") == 0 ||
-            strcmp(command, "pwd") == 0 ||
-            strcmp(command, "cd") == 0
-        ) {
-            // Built-in commands handle redirection in the parent process
-            if (parsed_result->redir_info->has_stdout_redirect) {
-                saved_stdout = setup_stdout_redirection(parsed_result->redir_info->stdout_file, parsed_result->redir_info->stdout_mode);
-                if (saved_stdout == -1) {
-                    fprintf(stderr, "ERROR: Failed to setup redirection to %s\n", parsed_result->redir_info->stdout_file);
-                    free_parse_result(parsed_result);
-                    continue;
-                }
-            }
-
-            if (parsed_result->redir_info->has_stderr_redirect) {
-                saved_stderr = setup_stderr_redirection(parsed_result->redir_info->stderr_file, parsed_result->redir_info->stderr_mode);
-                if (saved_stderr == -1) {
-                    fprintf(stderr, "ERROR: Failed to setup stderr redirection to %s\n", parsed_result->redir_info->stderr_file);
-                    // If stderr redirect fails, restore stdout if it was unsuccessfully redirected
-                    if (saved_stdout != -1) {
-                        restore_stderr(saved_stdout);
-                    }
-                    free_parse_result(parsed_result);
-                    continue;
-                }
-            }
-
-            if (strcmp(command, "echo") == 0) {
-                handle_echo_cmd(parsed_result->argv);
-            } else if (strcmp(command, "type") == 0) {
-                handle_type_cmd(parsed_result->argv);
-            } else if (strcmp(command, "pwd") == 0) {
-                char* pwd = handle_pwd_cmd();
-                if (pwd != NULL) {
-                    printf("%s\n", pwd);
-                    free(pwd);
-                } else {
-                    printf("pwd: could not retrieve current working directory\n");
-                }
-            } else if (strcmp(command, "cd") == 0) {
-                handle_cd_cmd(parsed_result->argv);
-            }
-            
-            // Restore stdout after built-in execution if it was redirected
-            if (saved_stdout != -1) {
-                restore_stdout(saved_stdout);
-            }
-
-            if (saved_stderr != -1) {
-                restore_stderr(saved_stderr);
-            }
-        } else {
-            // External commands handle redirection in the child process
-            char* exePath = find_exe_in_path(command);
-            if (exePath != NULL) {
-                execute_external_exe_with_redirection(exePath, parsed_result->argv, parsed_result->redir_info);
-                free(exePath);
-            } else {
-                printf("%s: command not found\n", command);
+        // Check for pipeline operator
+        int has_pipe = 0;
+        for (int i = 0; tokens[i] != NULL; i++) {
+            if (strcmp(tokens[i], "|") == 0) {
+                has_pipe = 1;
+                break;
             }
         }
 
+        if (has_pipe) {
+            // Split tokens into segments separated by pipes
+            int n_segments;
+            char*** segments = split_tokens_by_pipe(tokens, &n_segments);
+            
+            // Parse each segment for redirection
+            ParseResult** segment_results = malloc(n_segments * sizeof(ParseResult*));
+            for (int i = 0; i < n_segments; i++) {
+                segment_results[i] = malloc(sizeof(ParseResult));
+                segment_results[i]->redir_info = init_redirection_info();
+                segment_results[i]->argv = segments[i]; // Use the segment tokens directly
+                
+                // Parse redirection within this segment
+                int redirect_stdout_idx = -1;
+                int redirect_stderr_idx = -1;
+                int token_count = 0;
+                while (segments[i][token_count] != NULL) token_count++;
+                
+                for (int j = 0; j < token_count; j++) {
+                    if (strcmp(segments[i][j], ">") == 0 || strcmp(segments[i][j], "1>") == 0) {
+                        redirect_stdout_idx = j;
+                        segment_results[i]->redir_info->stdout_mode = 0;
+                    } else if (strcmp(segments[i][j], ">>") == 0 || strcmp(segments[i][j], "1>>") == 0) {
+                        redirect_stdout_idx = j;
+                        segment_results[i]->redir_info->stdout_mode = 1;
+                    } else if (strcmp(segments[i][j], "2>") == 0) {
+                        redirect_stderr_idx = j;
+                        segment_results[i]->redir_info->stderr_mode = 0;
+                    } else if (strcmp(segments[i][j], "2>>") == 0) {
+                        redirect_stderr_idx = j;
+                        segment_results[i]->redir_info->stderr_mode = 1;
+                    }
+                }
+                
+                // Handle stdout redirection
+                if (redirect_stdout_idx != -1) {
+                    if (redirect_stdout_idx + 1 >= token_count) {
+                        fprintf(stderr, "shell: syntax error: expected filename after stdout redirection\n");
+                        continue;
+                    }
+                    segment_results[i]->redir_info->has_stdout_redirect = 1;
+                    segment_results[i]->redir_info->stdout_file = strdup(segments[i][redirect_stdout_idx + 1]);
+                    
+                    // Remove redirection tokens from argv
+                    segments[i][redirect_stdout_idx] = NULL;
+                }
+                
+                // Handle stderr redirection
+                if (redirect_stderr_idx != -1) {
+                    if (redirect_stderr_idx + 1 >= token_count) {
+                        fprintf(stderr, "shell: syntax error: expected filename after stderr redirection\n");
+                        continue;
+                    }
+                    segment_results[i]->redir_info->has_stderr_redirect = 1;
+                    segment_results[i]->redir_info->stderr_file = strdup(segments[i][redirect_stderr_idx + 1]);
+                    
+                    // Remove redirection tokens from argv
+                    segments[i][redirect_stderr_idx] = NULL;
+                }
+            }
+            
+            // Execute the pipeline
+            execute_pipeline(segment_results, n_segments);
+            
+            // Clean up
+            for (int i = 0; i < n_segments; i++) {
+                free_redirection_info(segment_results[i]->redir_info);
+                free(segment_results[i]);
+                free(segments[i]);
+            }
+            free(segment_results);
+            free(segments);
+            free_argv(tokens);
+        } else {
+            // Non-pipeline command
+            ParseResult* parsed_result = parse_args_with_redirection(processedInput);
+            if (parsed_result == NULL) {
+                free(input);
+                free_argv(tokens);
+                continue;
+            }
+
+            if (parsed_result->argv[0] == NULL) {
+                free_parse_result(parsed_result);
+                free(input);
+                free_argv(tokens);
+                continue;
+            }
+
+            const char* command = parsed_result->argv[0];
+            int saved_stdout = -1;
+            int saved_stderr = -1;
+
+            if (strcmp(command, "exit") == 0) {
+                status = handle_exit_cmd(parsed_result->argv);
+                free_parse_result(parsed_result);
+                free(input);
+                free_argv(tokens);
+                break;
+            } else if (
+                strcmp(command, "echo") == 0 ||
+                strcmp(command, "type") == 0 ||
+                strcmp(command, "pwd") == 0 ||
+                strcmp(command, "cd") == 0
+            ) {
+                if (parsed_result->redir_info->has_stdout_redirect) {
+                    saved_stdout = setup_stdout_redirection(parsed_result->redir_info->stdout_file, parsed_result->redir_info->stdout_mode);
+                }
+                if (parsed_result->redir_info->has_stderr_redirect) {
+                    saved_stderr = setup_stderr_redirection(parsed_result->redir_info->stderr_file, parsed_result->redir_info->stderr_mode);
+                }
+
+                if (strcmp(command, "echo") == 0) {
+                    handle_echo_cmd(parsed_result->argv);
+                } else if (strcmp(command, "type") == 0) {
+                    handle_type_cmd(parsed_result->argv);
+                } else if (strcmp(command, "pwd") == 0) {
+                    char* pwd = handle_pwd_cmd();
+                    if (pwd != NULL) {
+                        printf("%s\n", pwd);
+                        free(pwd);
+                    }
+                } else if (strcmp(command, "cd") == 0) {
+                    handle_cd_cmd(parsed_result->argv);
+                }
+
+                if (saved_stdout != -1) restore_stdout(saved_stdout);
+                if (saved_stderr != -1) restore_stderr(saved_stderr);
+            } else {
+                char* exePath = find_exe_in_path(command);
+                if (exePath != NULL) {
+                    execute_external_exe_with_redirection(exePath, parsed_result->argv, parsed_result->redir_info);
+                    free(exePath);
+                } else {
+                    printf("%s: command not found\n", command);
+                }
+            }
+            free_parse_result(parsed_result);
+        }
+
         free(input);
-        free_parse_result(parsed_result);
+        free_argv(tokens);
     }
 
     return status;
