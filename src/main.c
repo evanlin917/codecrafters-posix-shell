@@ -760,16 +760,36 @@ void handle_cd_cmd(char** argv) {
 }
 
 // Helper function to handle `history` commands
-void handle_history_cmd() {
+void handle_history_cmd(char** argv) {
     HIST_ENTRY** history_entries = history_list();
     if (!history_entries) {
         return;
     }
 
-    int history_length = 0;
-    while (history_entries[history_length] != NULL) {
-        printf("%5d %s\n", history_length + history_base, history_entries[history_length]->line);
-        history_length++;
+    int total_entries = 0
+    while (history_entries[total_entries] != NULL) {
+        total_entries++;
+    }
+
+    if (argv[1] != NULL) {
+        char* endptr;
+        long temp = strtol(argv[1], *endptr, 10);
+
+        // Validate the argument
+        if (*endptr != '\0' || temp <= 0) {
+            fprintf(stderr, "history: %s: numeric argument required\n", argv[1]);
+            return;
+        }
+
+        n = (int) temp;
+        if (n > total_entries) {
+            n = total_entries;
+        }
+    }
+
+    int start_idx = total_entries - n;
+    for (int i = start_idx; i < total_entries; i++) {
+        printf("%5d %s\n", i + history_base, history_entries[i]->line);
     }
 }
 
@@ -1150,7 +1170,7 @@ void execute_pipeline(ParseResult** segments, int n_segments) {
                 handle_cd_cmd(segments[i]->argv);
                 exit(0);
             } else if (strcmp(command, "history") == 0) {
-                handle_history_cmd();
+                handle_history_cmd(segments[i]->argv);
                 exit(0);
             } else {
                 char* exePath = find_exe_in_path(command);
@@ -1369,7 +1389,7 @@ int main() {
                 } else if (strcmp(command, "cd") == 0) {
                     handle_cd_cmd(parsed_result->argv);
                 } else if (strcmp(command, "history") == 0) {
-                    handle_history_cmd();
+                    handle_history_cmd(parsed_result->argv);
                 }
 
                 if (saved_stdout != -1) restore_stdout(saved_stdout);
