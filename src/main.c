@@ -771,6 +771,7 @@ void handle_history_cmd(char** argv) {
         total_entries++;
     }
 
+    int n = total_entries;
     if (argv[1] != NULL) {
         char* endptr;
         long temp = strtol(argv[1], *endptr, 10);
