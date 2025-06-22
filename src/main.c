@@ -796,7 +796,7 @@ void handle_history_cmd(char** argv) {
 
         free(line);
         fclose(fp);
-        last_history_written_idx = history_length;
+        int last_history_written_idx = history_length;
         return;
     }
     // Handle history -w <file> option: write history to file (overwrite)
