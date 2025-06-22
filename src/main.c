@@ -1066,7 +1066,7 @@ void execute_pipeline(ParseResult** segments, int n_segments) {
     for (int i = 0; i < n_segments; i++) {
         // Create new pipe if not last command
         if (i < n_segments - 1) {
-            if (pipe(next_pipe) {
+            if (pipe(next_pipe)) {
                 perror("pipe");
                 return;
             }
