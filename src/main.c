@@ -826,7 +826,7 @@ void handle_history_cmd(char** argv) {
         return;
     }
     // Handle history -a <file> option: append history to file
-    else if (argv[1] != NULL && strcmp(arv[1], "-a") == 0) {
+    else if (argv[1] != NULL && strcmp(argv[1], "-a") == 0) {
         if (argv[2] == NULL) {
             fprintf(stderr, "history: -a option requires an argument\n");
             return;
