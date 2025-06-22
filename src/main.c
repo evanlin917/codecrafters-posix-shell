@@ -761,6 +761,45 @@ void handle_cd_cmd(char** argv) {
 
 // Helper function to handle `history` commands
 void handle_history_cmd(char** argv) {
+    if (argv[1] != NULL && strcmp(argv[1], "-r") == 0) {
+        if (argv[2] == NULL) {
+            fprintf(stderr, "history: -r: option requires an argument");
+            return;
+        }
+
+        const char* filename = argv[2];
+        FILE* fp = fopen(filename, "r");
+        if (fp == NULL) {
+            perror("history");
+            return;
+        }
+
+        char* line = NULL;
+        size_t len = 0;
+        ssize_t read;
+
+        while ((read = getline(&lie, &len, fp)) != -1) {
+            // Remove trailing newline
+            if (read > 0 && line[read-1] == '\n') {
+                line[read-1] = '\0';
+                read--;
+            }
+
+            // Skip empty lines
+            if (read <= 0 || strlen(line) == 0) {
+                continue;
+            }
+
+            // Add to history
+            add_history(line);
+        }
+
+        free(line);
+        fclose(fp);
+        return;
+    }
+    
+    // Exiting history display logic below
     HIST_ENTRY** history_entries = history_list();
     if (!history_entries) {
         return;
