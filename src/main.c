@@ -759,6 +759,9 @@ void handle_cd_cmd(char** argv) {
     }
 }
 
+// Global variable keeping track of last written history index.
+static int last_history_written_idx = 0;
+
 // Helper function to handle `history` commands
 void handle_history_cmd(char** argv) {
     if (argv[1] != NULL && strcmp(argv[1], "-r") == 0) {
@@ -796,7 +799,7 @@ void handle_history_cmd(char** argv) {
 
         free(line);
         fclose(fp);
-        int last_history_written_idx = history_length;
+        last_history_written_idx = history_length;
         return;
     }
     // Handle history -w <file> option: write history to file (overwrite)
