@@ -768,7 +768,7 @@ void handle_history_cmd() {
 
     int history_length = 0;
     while (history_entries[history_length] != NULL) {
-        printf("\t%5d %s\n", history_length + history_base, history_entries[history_length]->line);
+        printf("%5d %s\n", history_length + history_base, history_entries[history_length]->line);
         history_length++;
     }
 }
@@ -1346,7 +1346,8 @@ int main() {
                 strcmp(command, "echo") == 0 ||
                 strcmp(command, "type") == 0 ||
                 strcmp(command, "pwd") == 0 ||
-                strcmp(command, "cd") == 0
+                strcmp(command, "cd") == 0 ||
+                strcmp(command, "history") == 0
             ) {
                 if (parsed_result->redir_info->has_stdout_redirect) {
                     saved_stdout = setup_stdout_redirection(parsed_result->redir_info->stdout_file, parsed_result->redir_info->stdout_mode);
