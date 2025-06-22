@@ -763,7 +763,7 @@ void handle_cd_cmd(char** argv) {
 void handle_history_cmd(char** argv) {
     if (argv[1] != NULL && strcmp(argv[1], "-r") == 0) {
         if (argv[2] == NULL) {
-            fprintf(stderr, "history: -r: option requires an argument");
+            fprintf(stderr, "history: -r: option requires an argument\n");
             return;
         }
 
@@ -795,6 +795,60 @@ void handle_history_cmd(char** argv) {
         }
 
         free(line);
+        fclose(fp);
+        return;
+    }
+    // Handle history -w <file> option: write history to file (overwrite)
+    else if (argv[1] != NULL && strcmp(argv[1], "-w") == 0) {
+        if (argv[2] == NULL) {
+            fprintf(stderr, "history: -w: option requires an argument\n");
+            return;
+        }
+
+        const char* filename = argv[2];
+        FILE* fp = fopen(filename, "w");
+        if (fp == NULL) {
+            perror("history");
+            return;
+        }
+
+        HIST_ENTRY** history_entries = history_list();
+        if (!history_entries) {
+            fclose(fp);
+            return;
+        }
+
+        for (int i = 0; history_entries[i] != NULL; i++) {
+            fprintf(fp, "%s\n", history_entries[i]->line);
+        }
+
+        fclose(fp);
+        return;
+    }
+    // Handle history -a <file> option: append history to file
+    else if (argv[1] != NULL && strcmp(arv[1], "-a") == 0) {
+        if (argv[2] == NULL) {
+            fprintf(stderr, "history: -a option requires an argument\n");
+            return;
+        }
+
+        const char* filename = argv[2];
+        FILE* fp = fopen(filename, "a");
+        if (fp == NULL) {
+            perror("history");
+            return;
+        }
+
+        HIST_ENTRY** history_entries = history_list();
+        if (!history_entries) {
+            fclose(fp);
+            return;
+        }
+
+        for (int i = 0; history_entries[i] != NULL; i++) {
+            fprintf(fp, "%s\n", history_entries[i]->line);
+        }
+
         fclose(fp);
         return;
     }
