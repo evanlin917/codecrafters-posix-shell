@@ -768,7 +768,7 @@ void handle_history_cmd() {
 
     int history_length = 0;
     while (history_entries[history_length] != NULL) {
-        printf("%5d %s\n", history_length + history_base, history_entries[history_length]->line);
+        printf("\t%5d %s\n", history_length + history_base, history_entries[history_length]->line);
         history_length++;
     }
 }
