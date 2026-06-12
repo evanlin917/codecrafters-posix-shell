@@ -1208,6 +1208,15 @@ char* filename_generator(const char* text, int state) {
 
         // Compare against extracted static_prefix
         if (strncmp(static_prefix, entry->d_name, strlen(static_prefix)) == 0) {
+
+            // Completion for directories
+            if (entry->d_type == DT_DIR) {
+                rl_completion_append_character = '/';
+            }
+            else {
+                rl_completion_append_character = ' ';
+            }
+
             char full_match[PATH_MAX];
             snprintf(full_match, sizeof(full_match), "%s%s", dir_path, entry->d_name);
 
@@ -1225,6 +1234,9 @@ char* filename_generator(const char* text, int state) {
 // Completion entry function
 char** builtin_completion(const char* text, int start, int end) {
     rl_attempted_completion_over = 1;
+
+    // Always reset to the default space at the beginning of a new TAB press
+    rl_completion_append_character = ' ';
 
     if (start == 0) {
         // User is completing command name
