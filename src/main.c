@@ -1061,7 +1061,7 @@ void restore_stderr(int saved_stderr) {
     }
 }
 
-// Generator function for completion
+// Generator function for command completion in PATH
 char* command_generator(const char* text, int state) {
     static int builtin_idx;
     static int path_idx;
@@ -1155,10 +1155,57 @@ char* command_generator(const char* text, int state) {
     return NULL;
 }
 
+// Generator function for filename completion in current directory
+char* filename_generator(const char* text, int state) {
+    static DIR* dirp = NULL;
+    struct dirent* entry;
+
+    // State 0 means this is the first call for this completion request
+    if (!state) {
+        if (dirp) {
+            closedir(dirp);
+        }
+        dirp = opendir(".");
+        if (!dirp) {
+            perror("filename_generator: opendir failed");
+            return NULL;
+        }
+    }
+
+    // Read through the directory entries
+    while ((entry = readdir(dirp)) != NULL) {
+        // Skip the current and parent directory shortcuts
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        // Check if the filename starts with the prefix typed by user
+        if (strncmp(text, entry->d_name, strlen(text)) == 0) {
+            char* match = strdup(entry->d_name);
+
+            // Return match. Readline will call again with state != 0
+            return match;
+        }
+    }
+
+    // No more matches left, so clean up and return NULL
+    closedir(dirp);
+    dirp = NULL;
+    return NULL;
+}
+
 // Completion entry function
 char** builtin_completion(const char* text, int start, int end) {
     rl_attempted_completion_over = 1;
-    return rl_completion_matches(text, command_generator);
+
+    if (start == 0) {
+        // User is completing command name
+        return rl_completion_matches(text, command_generator);
+    }
+    else {
+        // User is completing an argument (filename in current directory)
+        return rl_completion_matches(text, filename_generator);
+    }
 }
 
 // Helper function to split tokens by pipe operators
