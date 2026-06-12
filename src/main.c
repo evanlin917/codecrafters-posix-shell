@@ -1158,14 +1158,41 @@ char* command_generator(const char* text, int state) {
 // Generator function for filename completion in current directory
 char* filename_generator(const char* text, int state) {
     static DIR* dirp = NULL;
+    static char static_prefix[BUF_SIZE]; // Persists across calls when state != 0
+    static char dir_path[PATH_MAX]; // Persists to reconstruct full path
     struct dirent* entry;
 
     // State 0 means this is the first call for this completion request
     if (!state) {
         if (dirp) {
             closedir(dirp);
+            dirp = NULL;
         }
-        dirp = opendir(".");
+        
+        // Find the last occurrenc of '/'
+        char* last_slash = strrchr(text, '/');
+
+        if (last_slash != NULL) {
+            // Calculate lengths
+            size_t dir_len = (last_slash - text) + 1; // Includes the '/'
+
+            // Copy directory portion and null-terminate it
+            strncpy(dir_path, text, dir_len);
+            dir_path[dir_len] = '\0';
+
+            // Copy whatever follows slash as the search prefix
+            strcpy(static_prefix, last_slash + 1);
+
+            // Open specified directory
+            dirp = opendir(dir_path);
+        }
+        else {
+            // Fallback: No slash means current directory
+            strcpy(dir_path, ""); // Keep empty so that full path stitching works later
+            strcpy(static_prefix, text);
+            dirp = opendir(".");
+        }
+
         if (!dirp) {
             perror("filename_generator: opendir failed");
             return NULL;
@@ -1179,12 +1206,13 @@ char* filename_generator(const char* text, int state) {
             continue;
         }
 
-        // Check if the filename starts with the prefix typed by user
-        if (strncmp(text, entry->d_name, strlen(text)) == 0) {
-            char* match = strdup(entry->d_name);
+        // Compare against extracted static_prefix
+        if (strncmp(static_prefix, entry->d_name, strlen(static_prefix)) == 0) {
+            char full_match[PATH_MAX];
+            snprintf(full_match, sizeof(full_match), "%s%s", dir_path, entry->d_name);
 
             // Return match. Readline will call again with state != 0
-            return match;
+            return strdup(full_match);
         }
     }
 
