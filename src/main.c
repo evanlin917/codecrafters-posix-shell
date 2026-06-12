@@ -1155,7 +1155,7 @@ char* command_generator(const char* text, int state) {
     return NULL;
 }
 
-// Generator function for filename completion in current directory
+// Generator function for filename completion
 char* filename_generator(const char* text, int state) {
     static DIR* dirp = NULL;
     static char static_prefix[BUF_SIZE]; // Persists across calls when state != 0
@@ -1164,6 +1164,8 @@ char* filename_generator(const char* text, int state) {
 
     // State 0 means this is the first call for this completion request
     if (!state) {
+        rl_filename_completion_desired = 1;
+
         if (dirp) {
             closedir(dirp);
             dirp = NULL;
@@ -1231,19 +1233,19 @@ char* filename_generator(const char* text, int state) {
     return NULL;
 }
 
-// Completion entry function
+// Generator function for builtin command completion
 char** builtin_completion(const char* text, int start, int end) {
-    rl_attempted_completion_over = 1;
-
     // Always reset to the default space at the beginning of a new TAB press
     rl_completion_append_character = ' ';
 
     if (start == 0) {
         // User is completing command name
+        rl_attempted_completion_over = 1;
         return rl_completion_matches(text, command_generator);
     }
     else {
         // User is completing an argument (filename in current directory)
+        rl_attempted_completion_over = 0;
         return rl_completion_matches(text, filename_generator);
     }
 }
