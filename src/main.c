@@ -1507,6 +1507,43 @@ void execute_pipeline(ParseResult** segments, int n_segments, Job* jobs_list) {
     free(pids);
 }
 
+// Helper function to automatically display and clear completed background jobs
+void flush_done_jobs(Job* list) {
+    int max_id = -1;
+    int second_max_id = -1;
+
+    // Pass 1: Find the highest and second-highest active job IDs
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (list[i].is_active) {
+            if (list[i].job_id > max_id) {
+                second_max_id = max_id;
+                max_id = list[i].job_id;
+            } else if (list[i].job_id > second_max_id) {
+                second_max_id = list[i].job_id;
+            }
+        }
+    }
+
+    // Pass 2: Only print and remove jobs which are DONE
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (list[i].is_active && list[i].is_done) {
+            char marker = ' ';
+            if (list[i].job_id == max_id) {
+                marker = '+';
+            } else if (list[i].job_id == second_max_id) {
+                marker = '-';
+            }
+
+            // Print the "Done" line matching your formatting requirements
+            printf("[%d]%c %-24s%s\n", list[i].job_id, marker, "Done", list[i].command);
+
+            // Remove it from records immediately
+            list[i].is_active = 0;
+            list[i].is_done = 0;
+        }
+    }
+}
+
 // Helper function reaps finished child processes to prevent zombies
 void reap_background_jobs(Job* list) {
     int status;
@@ -1550,6 +1587,7 @@ int main() {
 
     while (1) {
         reap_background_jobs(jobs_list);
+        flush_done_jobs(jobs_list);
 
         char* input = readline("$ ");
         if (input == NULL) {
