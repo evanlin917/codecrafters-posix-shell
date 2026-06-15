@@ -17,7 +17,7 @@
 
 // Define built-in commands for completion
 const char* builtins[] = {
-    "echo", "exit", "type", "pwd", "cd", "history", NULL
+    "echo", "exit", "type", "pwd", "cd", "history", "jobs", NULL
 };
 
 // Structure to hold parsing state (quoting)
@@ -667,7 +667,8 @@ void handle_type_cmd(char** argv) { // Now takes char** argv
             (strcmp(cmd_to_type, "type") == 0) ||
             (strcmp(cmd_to_type, "pwd") == 0) ||
             (strcmp(cmd_to_type, "cd") == 0) ||
-            (strcmp(cmd_to_type, "history") == 0)
+            (strcmp(cmd_to_type, "history") == 0) ||
+            (strcmp(cmd_to_type, "jobs") == 0)
         ) {
             printf("%s is a shell builtin\n", cmd_to_type);
             continue; // Check next argument
@@ -895,6 +896,11 @@ void handle_history_cmd(char** argv) {
     for (int i = start_idx; i < total_entries; i++) {
         printf("%5d %s\n", i + history_base, history_entries[i]->line);
     }
+}
+
+// Helper function to handle `jobs` commands
+void handle_jobs_cmd(char** argv) {
+    (void)argv;
 }
 
 // Helper function to find if executable exists in PATH
@@ -1365,7 +1371,11 @@ void execute_pipeline(ParseResult** segments, int n_segments) {
             } else if (strcmp(command, "history") == 0) {
                 handle_history_cmd(segments[i]->argv);
                 exit(0);
-            } else {
+            } else if (strcmp(command, "jobs") == 0) {
+                handle_jobs_cmd(segments[i]->argv);
+                exit(0);
+            }
+            else {
                 char* exePath = find_exe_in_path(command);
                 if (exePath != NULL) {
                     execv(exePath, segments[i]->argv);
@@ -1568,7 +1578,8 @@ int main() {
                 strcmp(command, "type") == 0 ||
                 strcmp(command, "pwd") == 0 ||
                 strcmp(command, "cd") == 0 ||
-                strcmp(command, "history") == 0
+                strcmp(command, "history") == 0 ||
+                strcmp(command, "jobs") == 0
             ) {
                 if (parsed_result->redir_info->has_stdout_redirect) {
                     saved_stdout = setup_stdout_redirection(parsed_result->redir_info->stdout_file, parsed_result->redir_info->stdout_mode);
@@ -1591,6 +1602,8 @@ int main() {
                     handle_cd_cmd(parsed_result->argv);
                 } else if (strcmp(command, "history") == 0) {
                     handle_history_cmd(parsed_result->argv);
+                } else if (strcmp(command, "jobs") == 0) {
+                    handle_jobs_cmd(parsed_result->argv);
                 }
 
                 if (saved_stdout != -1) restore_stdout(saved_stdout);
