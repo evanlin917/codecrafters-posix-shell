@@ -14,6 +14,7 @@
 #define BUF_SIZE 512
 #define MAX_ARGS 64
 #define ARG_SIZE 64
+#define MAX_JOBS 100
 
 // Define built-in commands for completion
 const char* builtins[] = {
@@ -47,7 +48,27 @@ typedef struct {
 typedef struct {
     char** argv;
     RedirectionInfo* redir_info;
+    int is_background_process;
 } ParseResult;
+
+// Structure to maintain record of running background processes
+typedef struct {
+    int job_id;
+    pid_t pid;
+    char command[BUF_SIZE];
+    int is_active;
+} Job;
+
+// Helper function to initialize job lists
+void init_jobs_system(Job* list, int* next_id) {
+    *next_id = 1;
+    for (int i = 0; i < MAX_JOBS; i++) {
+        list[i].job_id = 0;
+        list[i].pid = 0;
+        list[i].is_active = 0;
+        memset(list[i].command, 0, BUF_SIZE);
+    }
+}
 
 // Helper function to initialize argument buffer
 ArgBuffer* init_arg_buffer() {
@@ -618,6 +639,14 @@ ParseResult* parse_args_with_redirection(const char* input_line) {
     }
     result->argv[argc] = NULL;
 
+    if (argc > 0 && strcmp(result->argv[argc - 1], "&") == 0) {
+        result->is_background_process = 1;
+        free(result->argv[argc - 1]);
+        result->argv[argc - 1] = NULL;
+    } else {
+        result->is_background_process = 0;
+    }
+
     free_argv(all_args);
     
     return result;
@@ -899,8 +928,13 @@ void handle_history_cmd(char** argv) {
 }
 
 // Helper function to handle `jobs` commands
-void handle_jobs_cmd(char** argv) {
+void handle_jobs_cmd(char** argv, Job* list) {
     (void)argv;
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (list[i].is_active) {
+            printf("[%d] Running                 %s &\n", list[i].job_id, list[i].command);
+        }
+    }
 }
 
 // Helper function to find if executable exists in PATH
@@ -947,7 +981,7 @@ char* find_exe_in_path(const char* exe) {
 }
 
 // Helper function to fork process and execute external executables
-void execute_external_exe_with_redirection(const char* exePath, char* argv[], RedirectionInfo* redir_info) {
+void execute_external_exe_with_redirection(const char* exePath, char* argv[], RedirectionInfo* redir_info, int is_background_process, Job* list, int* next_id) {
     pid_t pid = fork();
 
     if (pid == 0) { // Child process
@@ -989,8 +1023,23 @@ void execute_external_exe_with_redirection(const char* exePath, char* argv[], Re
         perror("execv failed"); // Only reached if execv fails
         exit(1); // Child exits if execv fails
     } else if (pid > 0) { // Parent process
-        int status;
-        waitpid(pid, &status, 0); // Parent waits for child
+        if (is_background_process) {
+            printf("[%d] %d\n", *next_id, pid);
+
+            for (int i = 0; i < MAX_JOBS; i++) {
+                if (!list[i].is_active) {
+                    list[i].job_id = (*next_id)++;
+                    list[i].pid = pid;
+                    strncpy(list[i].command, argv[0], BUF_SIZE);
+                    list[i].is_active = 1;
+                    break;
+                }
+            }
+        } else {
+            // Traditional blocking behavior for foreground jobs
+            int status;
+            waitpid(pid, &status, 0); // Parent waits for child
+        }
     } else { // Fork failed
         perror("fork failed");
     }
@@ -1292,7 +1341,7 @@ char*** split_tokens_by_pipe(char** tokens, int* n_segments) {
 }
 
 // Execute a pipeline of commands
-void execute_pipeline(ParseResult** segments, int n_segments) {
+void execute_pipeline(ParseResult** segments, int n_segments, Job* jobs_list) {
     int prev_pipe[2] = {-1, -1};
     int next_pipe[2] = {-1, -1};
     pid_t* pids = malloc(n_segments * sizeof(pid_t));
@@ -1372,7 +1421,7 @@ void execute_pipeline(ParseResult** segments, int n_segments) {
                 handle_history_cmd(segments[i]->argv);
                 exit(0);
             } else if (strcmp(command, "jobs") == 0) {
-                handle_jobs_cmd(segments[i]->argv);
+                handle_jobs_cmd(segments[i]->argv, jobs_list);
                 exit(0);
             }
             else {
@@ -1416,7 +1465,27 @@ void execute_pipeline(ParseResult** segments, int n_segments) {
     free(pids);
 }
 
+// Helper function reaps finished child processes to prevent zombies
+void reap_background_jobs(Job* list) {
+    int status;
+    pid_t reaped_pid;
+
+    while ((reaped_pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        for (int i = 0; i < MAX_JOBS; i++) {
+            if (list[i].is_active && list[i].pid == reaped_pid) {
+                list[i].is_active = 0;
+                break;
+            }
+        }
+    }
+}
+
 int main() {
+    // Initialize jobs tracking array
+    Job jobs_list[MAX_JOBS];
+    int next_job_id;
+    init_jobs_system(jobs_list, &next_job_id);
+
     // Initialize readline
     rl_readline_name = "myshell";
     rl_basic_word_break_characters = " \t\n\"\'`@$><=;|&{(";
@@ -1438,6 +1507,8 @@ int main() {
     int status = 0;
 
     while (1) {
+        reap_background_jobs(jobs_list);
+
         char* input = readline("$ ");
         if (input == NULL) {
             printf("\n");
@@ -1536,7 +1607,7 @@ int main() {
             }
             
             // Execute the pipeline
-            execute_pipeline(segment_results, n_segments);
+            execute_pipeline(segment_results, n_segments, jobs_list);
             
             // Clean up
             for (int i = 0; i < n_segments; i++) {
@@ -1603,7 +1674,7 @@ int main() {
                 } else if (strcmp(command, "history") == 0) {
                     handle_history_cmd(parsed_result->argv);
                 } else if (strcmp(command, "jobs") == 0) {
-                    handle_jobs_cmd(parsed_result->argv);
+                    handle_jobs_cmd(parsed_result->argv, jobs_list);
                 }
 
                 if (saved_stdout != -1) restore_stdout(saved_stdout);
@@ -1611,7 +1682,7 @@ int main() {
             } else {
                 char* exePath = find_exe_in_path(command);
                 if (exePath != NULL) {
-                    execute_external_exe_with_redirection(exePath, parsed_result->argv, parsed_result->redir_info);
+                    execute_external_exe_with_redirection(exePath, parsed_result->argv, parsed_result->redir_info, parsed_result->is_background_process, jobs_list, &next_job_id);
                     free(exePath);
                 } else {
                     printf("%s: command not found\n", command);
