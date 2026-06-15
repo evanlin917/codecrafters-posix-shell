@@ -932,7 +932,7 @@ void handle_jobs_cmd(char** argv, Job* list) {
     (void)argv;
     for (int i = 0; i < MAX_JOBS; i++) {
         if (list[i].is_active) {
-            printf("[%d] Running                 %s &\n", list[i].job_id, list[i].command);
+            printf("[%d]+ %-24s%s &\n", list[i].job_id, "Running", list[i].command);
         }
     }
 }
@@ -1030,7 +1030,13 @@ void execute_external_exe_with_redirection(const char* exePath, char* argv[], Re
                 if (!list[i].is_active) {
                     list[i].job_id = (*next_id)++;
                     list[i].pid = pid;
-                    strncpy(list[i].command, argv[0], BUF_SIZE);
+                    list[i].command[0] = '\0';
+                    for (int j = 0; argv[j] != NULL; j++) {
+                        strncat(list[i].command, argv[j], BUF_SIZE - strlen(list[i].command) - 1);
+                        if (argv[j + 1] != NULL) {
+                            strncat(list[i].command, " ", BUF_SIZE - strlen(list[i].command) - 1);
+                        }
+                    }
                     list[i].is_active = 1;
                     break;
                 }
