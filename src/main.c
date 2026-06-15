@@ -57,6 +57,7 @@ typedef struct {
     pid_t pid;
     char command[BUF_SIZE];
     int is_active;
+    int is_done;
 } Job;
 
 // Helper function to initialize job lists
@@ -941,7 +942,16 @@ void handle_jobs_cmd(char** argv, Job* list, int curr_id, int prev_id) {
                 marker = '-';
             }
 
-            printf("[%d]%c %-24s%s &\n", list[i].job_id, marker, "Running", list[i].command);
+            if (list[i].is_done) {
+                // Print job as done with proper 24-character padding
+                printf("[%d]%c %-24s%s\n", list[i].job_id, marker, "Done", list[i].command);
+
+                // Remove job entry from table records immediately
+                list[i].is_active = 0;
+                list[i].is_done = 0;
+            } else {
+                printf("[%d]%c %-24s%s &\n", list[i].job_id, marker, "Running", list[i].command);
+            }
         }
     }
 }
@@ -1489,8 +1499,8 @@ void reap_background_jobs(Job* list) {
 
     while ((reaped_pid = waitpid(-1, &status, WNOHANG)) > 0) {
         for (int i = 0; i < MAX_JOBS; i++) {
-            if (list[i].is_active && list[i].pid == reaped_pid) {
-                list[i].is_active = 0;
+            if (list[i].is_active && list[i].pid == reaped_pid && !list[i].is_done) {
+                list[i].is_done = 1;
                 break;
             }
         }
@@ -1693,6 +1703,7 @@ int main() {
                 } else if (strcmp(command, "history") == 0) {
                     handle_history_cmd(parsed_result->argv);
                 } else if (strcmp(command, "jobs") == 0) {
+                    reap_background_jobs(jobs_list);
                     handle_jobs_cmd(parsed_result->argv, jobs_list, curr_job_id, prev_job_id);
                 }
 
