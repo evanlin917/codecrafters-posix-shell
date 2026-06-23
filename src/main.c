@@ -1158,6 +1158,29 @@ void handle_complete_cmd(char** argv, CompletionSystem* sys) {
         } else {
             fprintf(stderr, "complete: %s: no completion specification\n", argv[2]);
         }
+    } else if (argv[1] != NULL && strcmp(argv[1], "-r") == 0) {
+        // The -r Flag: Removes a stored completion rule
+        if (argv[2] == NULL) {
+            fprintf(stderr, "complete: usage: complete [-r] [command]\n");
+            return;
+        }
+
+        int idx = find_completion_index(sys, argv[2]);
+        if (idx != -1) {
+            // Free memory holding strings for this registration
+            free(sys->list[idx].command);
+            free(sys->list[idx].completer);
+
+            // Shift any subsequent items down to keep the registry list contiguous
+            for (int i = idx; i < sys->count - 1; i++) {
+                sys->list[i] = sys->list[i + 1];
+            }
+
+            // Clear out trailing slot and decrement tracking counter
+            sys->list[sys->count - 1].command = NULL;
+            sys->list[sys->count - 1].completer = NULL;
+            sys->count--;
+        }
     } else if (argv[1] != NULL && strcmp(argv[1] , "-C") == 0) {
         // The -C Flag: Registers new completion script
         if (argv[2] == NULL || argv[3] == NULL) {
