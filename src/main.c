@@ -1038,92 +1038,104 @@ CompletionSystem* get_set_completion_context(CompletionSystem* new_sys) {
 
 // Helper function which generates custom completion scripts registered
 char* script_completion_generator(const char* text, int state) {
-    CompletionSystem* sys = get_set_completion_context(NULL);
+    // Persistent static pointers to keep stream context alive across Readline iterations
+    static FILE* fp = NULL;
+    CompletionSystem* sys = NULL;
 
-    if (state != 0 || sys == NULL) {
-        return NULL;
-    }
+    // State 0 indicates this is the first TAB request for this word
+    if (state == 0) {
+        // Clean up any leaked or unclosed pipes from previous evaluations
+        if (fp != NULL) {
+            pclose(fp);
+            fp = NULL;
+        }
 
-    // COMP_LINE is exactly what is inside current Readline line buffer
-    setenv("COMP_LINE", rl_line_buffer, 1);
+        sys = get_set_completion_context(NULL);
+        if (sys == NULL) {
+            return NULL;
+        }
 
-    // COMP_POINT is current cursor index position tracked natively by Readline
-    char comp_point_str[32];
-    snprintf(comp_point_str, sizeof(comp_point_str), "%d", rl_point);
-    setenv("COMP_POINT", comp_point_str, 1);
+        // Set up environment variables for the script
+        setenv("COMP_LINE", rl_line_buffer, 1);
+        char comp_point_str[32];
+        snprintf(comp_point_str, sizeof(comp_point_str), "%d", rl_point);
+        setenv("COMP_POINT", comp_point_str, 1);
 
-    // Tokenize line up to current completion point to find parameters
-    char line_copy[BUF_SIZE];
-    strncpy(line_copy, rl_line_buffer, sizeof(line_copy) - 1);
-    line_copy[sizeof(line_copy) - 1] = '\0';
+        // Tokenize line up to current completion point to find parameters
+        char line_copy[BUF_SIZE];
+        strncpy(line_copy, rl_line_buffer, sizeof(line_copy) - 1);
+        line_copy[sizeof(line_copy) - 1] = '\0';
 
-    char* tokens[MAX_ARGS];
-    int token_count = 0;
+        char* tokens[MAX_ARGS];
+        int token_count = 0;
+        char* token = strtok(line_copy, " \t");
+        while (token != NULL && token_count < MAX_ARGS - 1) {
+            tokens[token_count++] = token;
+            token = strtok(NULL, " \t");
+        }
+        tokens[token_count] = NULL;
 
-    char* token = strtok(line_copy, " \t");
-    while (token != NULL && token_count < MAX_ARGS - 1) {
-        tokens[token_count++] = token;
-        token = strtok(NULL, " \t");
-    }
-    tokens[token_count] = NULL;
+        if (token_count == 0) {
+            unsetenv("COMP_LINE");
+            unsetenv("COMP_POINT");
+            return NULL;
+        }
 
-    if (token_count == 0) {
-        unsetenv("COMP_LINE");
-        unsetenv("COMP_POINT");
-        return NULL;
-    }
+        // Identify argv[1], argv[2], argv[3]
+        const char* cmd_name = tokens[0];
+        const char* current_word = text;
+        const char* prev_word = "";
 
-    // Identify argv[1], argv[2], argv[3]
-    const char* cmd_name = tokens[0];
-    const char* current_word = text;
-    const char* prev_word = "";
-
-    if (token_count >= 2) {
-        if (strcmp(tokens[token_count - 1], text) == 0) {
-            if (token_count >= 2) {
-                prev_word = tokens[token_count - 2];
+        if (token_count >= 2) {
+            if (strcmp(tokens[token_count - 1], text) == 0) {
+                if (token_count >= 2) {
+                    prev_word = tokens[token_count - 2];
+                }
+            } else {
+                prev_word = tokens[token_count - 1];
             }
-        } else {
-            prev_word = tokens[token_count - 1];
+        }
+
+        // Find the script path
+        int idx = find_completion_index(sys, cmd_name);
+        if (idx == -1) {
+            unsetenv("COMP_LINE");
+            unsetenv("COMP_POINT");
+            return NULL;
+        }
+
+        const char* script_path = sys->list[idx].completer;
+
+        // Construct execution command string securely wrapping arguments in quotes
+        char exec_cmd[BUF_SIZE * 2];
+        snprintf(exec_cmd, sizeof(exec_cmd), "%s '%s' '%s' '%s'", script_path, cmd_name, current_word, prev_word);
+
+        fp = popen(exec_cmd, "r");
+        unsetenv("COMP_LINE");
+        unsetenv("COMP_POINT");
+
+        if (!fp) {
+            perror("popen failed running completer");
+            return NULL;
         }
     }
 
-    // Find the script path
-    int idx = find_completion_index(sys, cmd_name);
-    if (idx == -1) {
-        unsetenv("COMP_LINE");
-        unsetenv("COMP_POINT");
-        return NULL;
-    }
-    
-    const char* script_path = sys->list[idx].completer;
+    if (fp != NULL) {
+        char output_line[BUF_SIZE];
+        while (fgets(output_line, sizeof(output_line), fp) != NULL) {
+            size_t len = strlen(output_line);
+            if (len > 0 && output_line[len - 1] == '\n') {
+                output_line[len - 1] = '\0';
+            }
 
-    // Construct execution command string securely wrapping arguments in quotes
-    char exec_cmd[BUF_SIZE * 2];
-    snprintf(exec_cmd, sizeof(exec_cmd), "%s '%s' '%s' '%s'", script_path, cmd_name, current_word, prev_word);
-
-    FILE* fp = popen(exec_cmd, "r");
-    if (!fp) {
-        perror("popen failed running completer");
-        unsetenv("COMP_LINE");
-        unsetenv("COMP_POINT");
-        return NULL;
-    }
-
-    char output_line[BUF_SIZE];
-    char* result = NULL;
-    if (fgets(output_line, sizeof(output_line), fp) != NULL) {
-        size_t len = strlen(output_line);
-        if (len > 0 && output_line[len - 1] == '\n') {
-            output_line[len - 1] = '\0';
+            return strdup(output_line);
         }
-        result = strdup(output_line);
+
+        pclose(fp);
+        fp = NULL;
     }
 
-    pclose(fp);
-    unsetenv("COMP_LINE");
-    unsetenv("COMP_POINT");
-    return result;
+    return NULL;
 }
 
 // Helper function to handle `complete` commands
@@ -1146,7 +1158,7 @@ void handle_complete_cmd(char** argv, CompletionSystem* sys) {
         } else {
             fprintf(stderr, "complete: %s: no completion specification\n", argv[2]);
         }
-    } else if (argv[1] != NULL ) {
+    } else if (argv[1] != NULL && strcmp(argv[1] , "-C") == 0) {
         // The -C Flag: Registers new completion script
         if (argv[2] == NULL || argv[3] == NULL) {
             fprintf(stderr, "complete: usage: complete -C [completer] [command]\n");
