@@ -15,6 +15,7 @@
 #define MAX_ARGS 64
 #define ARG_SIZE 64
 #define MAX_JOBS 100
+#define MAX_COMPLETIONS 64
 
 // Define built-in commands for completion
 const char* builtins[] = {
@@ -60,6 +61,18 @@ typedef struct {
     int is_done;
 } Job;
 
+// Structure to keep mappings of command to completer script
+typedef struct {
+    char* command;
+    char* completer;
+} CompletionRegister;
+
+// Structure grouping registrations with count tracking variable
+typedef struct {
+    CompletionRegister list[MAX_COMPLETIONS];
+    int count;
+} CompletionSystem;
+
 // Helper function to initialize job lists
 void init_jobs_system(Job* list) {
     for (int i = 0; i < MAX_JOBS; i++) {
@@ -67,6 +80,15 @@ void init_jobs_system(Job* list) {
         list[i].pid = 0;
         list[i].is_active = 0;
         memset(list[i].command, 0, BUF_SIZE);
+    }
+}
+
+// Helper function to initialize completion specifications
+void init_completion_system(CompletionSystem* sys) {
+    sys->count = 0;
+    for (int i = 0; i < MAX_COMPLETIONS; i++) {
+        sys->list[i].command = NULL;
+        sys->list[i].completer = NULL;
     }
 }
 
@@ -994,21 +1016,60 @@ void handle_jobs_cmd(char** argv, Job* list) {
     }
 }
 
+// Helper function to look pu an existing command in registry
+int find_completion_index(CompletionSystem* sys, const char* command) {
+    for (int i = 0; i < sys->count; i++) {
+        if (sys->list[i].command != NULL && strcmp(sys->list[i].command, command) == 0) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
 // Helper function to handle `complete` commands
-void handle_complete_cmd(char** argv) {
-    if (argv == NULL || argv[0] == NULL) {
+void handle_complete_cmd(char** argv, CompletionSystem* sys) {
+    if (argv == NULL || argv[0] == NULL || sys == NULL) {
         return;
     }
 
     
     if (argv[1] != NULL && strcmp(argv[1], "-p") == 0) {
-        if (argv[2] != NULL) {
-            fprintf(stderr, "complete: %s: no completion specification\n", argv[2]);
-        } else {
+        // The -p Flag: Prints out matching specifications
+        if (argv[2] == NULL) {
             fprintf(stderr, "complete: usage: complete [-p] [command]\n");
+            return;
         }
-    } else {
-        // Handle other flags if needed later
+
+        int idx = find_completion_index(sys, argv[2]);
+        if (idx != -1) {
+            printf("complete -C '%s' %s\n", sys->list[idx].completer, sys->list[idx].command);
+        } else {
+            fprintf(stderr, "complete: %s: no completion specification\n", argv[2]);
+        }
+    } else if (argv[1] != NULL ) {
+        // The -C Flag: Registers new completion script
+        if (argv[2] == NULL || argv[3] == NULL) {
+            fprintf(stderr, "complete: usage: complete -C [completer] [command]\n");
+            return;
+        }
+
+        const char* script_path = argv[2];
+        const char* cmd_name = argv[3];
+
+        int idx = find_completion_index(sys, cmd_name);
+        if (idx != -1) {
+            free(sys->list[idx].completer);
+            sys->list[idx].completer = strdup(script_path);
+        } else {
+            if (sys->count < MAX_COMPLETIONS) {
+                sys->list[sys->count].command = strdup(cmd_name);
+                sys->list[sys->count].completer = strdup(script_path);
+                sys->count++;
+            } else {
+                fprintf(stderr, "complete: completion registry is full\n");
+            }
+        }
     }
 }
 
@@ -1425,7 +1486,7 @@ char*** split_tokens_by_pipe(char** tokens, int* n_segments) {
 }
 
 // Execute a pipeline of commands
-void execute_pipeline(ParseResult** segments, int n_segments, Job* jobs_list, int is_background_process) {
+void execute_pipeline(ParseResult** segments, int n_segments, Job* jobs_list, int is_background_process, CompletionSystem* comp_sys) {
     int prev_pipe[2] = {-1, -1};
     int next_pipe[2] = {-1, -1};
     pid_t* pids = malloc(n_segments * sizeof(pid_t));
@@ -1509,7 +1570,7 @@ void execute_pipeline(ParseResult** segments, int n_segments, Job* jobs_list, in
                 exit(0);
             }
             else if (strcmp(command, "complete") == 0) {
-                handle_complete_cmd(segments[i]->argv);
+                handle_complete_cmd(segments[i]->argv, comp_sys);
                 exit(0);
             }
             else {
@@ -1641,6 +1702,10 @@ int main() {
     Job jobs_list[MAX_JOBS];
     int next_job_id = 1;
     init_jobs_system(jobs_list);
+
+    // Initialize completion tracking system
+    CompletionSystem comp_sys;
+    init_completion_system(&comp_sys);
 
     // Initialize readline
     rl_readline_name = "myshell";
@@ -1778,7 +1843,7 @@ int main() {
             }
             
             // Execute the pipeline
-            execute_pipeline(segment_results, n_segments, jobs_list, pipeline_is_background);
+            execute_pipeline(segment_results, n_segments, jobs_list, pipeline_is_background, &comp_sys);
             
             // Clean up
             for (int i = 0; i < n_segments; i++) {
@@ -1850,7 +1915,7 @@ int main() {
                     handle_jobs_cmd(parsed_result->argv, jobs_list);
                 }
                 else if (strcmp(command, "complete") == 0) {
-                    handle_complete_cmd(parsed_result->argv);
+                    handle_complete_cmd(parsed_result->argv, &comp_sys);
                 }
 
                 if (saved_stdout != -1) restore_stdout(saved_stdout);
