@@ -1044,15 +1044,41 @@ char* script_completion_generator(const char* text, int state) {
         return NULL;
     }
 
+    // Tokenize line up to current completion point to find parameters
     char line_copy[BUF_SIZE];
     strncpy(line_copy, rl_line_buffer, sizeof(line_copy) - 1);
     line_copy[sizeof(line_copy) - 1] = '\0';
 
-    char* cmd_name = strtok(line_copy, " \t");
-    if (!cmd_name) {
+    char* tokens[MAX_ARGS];
+    int token_count = 0;
+
+    char* token = strtok(line_copy, " \t");
+    while (token != NULL && token_count < MAX_ARGS - 1) {
+        tokens[token_count++] = token;
+        token = strtok(NULL, " \t");
+    }
+    tokens[token_count] = NULL;
+
+    if (token_count == 0) {
         return NULL;
     }
 
+    // Identify argv[1], argv[2], argv[3]
+    const char* cmd_name = tokens[0];
+    const char* current_word = text;
+    const char* prev_word = "";
+
+    if (token_count >= 2) {
+        if (strcmp(tokens[token_count - 1], text) == 0) {
+            if (token_count >= 2) {
+                prev_word = tokens[token_count - 2];
+            }
+        } else {
+            prev_word = tokens[token_count - 1];
+        }
+    }
+
+    // Find the script path
     int idx = find_completion_index(sys, cmd_name);
     if (idx == -1) {
         return NULL;
@@ -1060,7 +1086,11 @@ char* script_completion_generator(const char* text, int state) {
     
     const char* script_path = sys->list[idx].completer;
 
-    FILE* fp = popen(script_path, "r");
+    // Construct execution command string securely wrapping arguments in quotes
+    char exec_cmd[BUF_SIZE * 2];
+    snprintf(exec_cmd, sizeof(exec_cmd), "%s '%s' '%s' '%s'", script_path, cmd_name, current_word, prev_word);
+
+    FILE* fp = popen(exec_cmd, "r");
     if (!fp) {
         perror("popen failed running completer");
         return NULL;
