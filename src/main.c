@@ -1044,6 +1044,14 @@ char* script_completion_generator(const char* text, int state) {
         return NULL;
     }
 
+    // COMP_LINE is exactly what is inside current Readline line buffer
+    setenv("COMP_LINE", rl_line_buffer, 1);
+
+    // COMP_POINT is current cursor index position tracked natively by Readline
+    char comp_point_str[32];
+    snprintf(comp_point_str, sizeof(comp_point_str), "%d", rl_point);
+    setenv("COMP_POINT", comp_point_str, 1);
+
     // Tokenize line up to current completion point to find parameters
     char line_copy[BUF_SIZE];
     strncpy(line_copy, rl_line_buffer, sizeof(line_copy) - 1);
@@ -1060,6 +1068,8 @@ char* script_completion_generator(const char* text, int state) {
     tokens[token_count] = NULL;
 
     if (token_count == 0) {
+        unsetenv("COMP_LINE");
+        unsetenv("COMP_POINT");
         return NULL;
     }
 
@@ -1081,6 +1091,8 @@ char* script_completion_generator(const char* text, int state) {
     // Find the script path
     int idx = find_completion_index(sys, cmd_name);
     if (idx == -1) {
+        unsetenv("COMP_LINE");
+        unsetenv("COMP_POINT");
         return NULL;
     }
     
@@ -1093,21 +1105,25 @@ char* script_completion_generator(const char* text, int state) {
     FILE* fp = popen(exec_cmd, "r");
     if (!fp) {
         perror("popen failed running completer");
+        unsetenv("COMP_LINE");
+        unsetenv("COMP_POINT");
         return NULL;
     }
 
     char output_line[BUF_SIZE];
+    char* result = NULL;
     if (fgets(output_line, sizeof(output_line), fp) != NULL) {
         size_t len = strlen(output_line);
         if (len > 0 && output_line[len - 1] == '\n') {
             output_line[len - 1] = '\0';
         }
-        pclose(fp);
-        return strdup(output_line);
+        result = strdup(output_line);
     }
 
     pclose(fp);
-    return NULL;
+    unsetenv("COMP_LINE");
+    unsetenv("COMP_POINT");
+    return result;
 }
 
 // Helper function to handle `complete` commands
