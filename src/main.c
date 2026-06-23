@@ -996,7 +996,20 @@ void handle_jobs_cmd(char** argv, Job* list) {
 
 // Helper function to handle `complete` commands
 void handle_complete_cmd(char** argv) {
-    (void) argv;
+    if (argv == NULL || argv[0] == NULL) {
+        return;
+    }
+
+    
+    if (argv[1] != NULL && strcmp(argv[1], "-p") == 0) {
+        if (argv[2] != NULL) {
+            fprintf(stderr, "complete: %s: no completion specification\n", argv[2]);
+        } else {
+            fprintf(stderr, "complete: usage: complete [-p] [command]\n");
+        }
+    } else {
+        // Handle other flags if needed later
+    }
 }
 
 // Helper function to find if executable exists in PATH
