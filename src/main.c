@@ -18,7 +18,7 @@
 
 // Define built-in commands for completion
 const char* builtins[] = {
-    "echo", "exit", "type", "pwd", "cd", "history", "jobs", NULL
+    "echo", "exit", "type", "pwd", "cd", "history", "jobs", "complete", NULL
 };
 
 // Structure to hold parsing state (quoting)
@@ -719,7 +719,8 @@ void handle_type_cmd(char** argv) { // Now takes char** argv
             (strcmp(cmd_to_type, "pwd") == 0) ||
             (strcmp(cmd_to_type, "cd") == 0) ||
             (strcmp(cmd_to_type, "history") == 0) ||
-            (strcmp(cmd_to_type, "jobs") == 0)
+            (strcmp(cmd_to_type, "jobs") == 0) ||
+            (strcmp(cmd_to_type, "complete") == 0)
         ) {
             printf("%s is a shell builtin\n", cmd_to_type);
             continue; // Check next argument
@@ -991,6 +992,11 @@ void handle_jobs_cmd(char** argv, Job* list) {
             }
         }
     }
+}
+
+// Helper function to handle `complete` commands
+void handle_complete_cmd(char** argv) {
+    (void) argv;
 }
 
 // Helper function to find if executable exists in PATH
@@ -1489,6 +1495,10 @@ void execute_pipeline(ParseResult** segments, int n_segments, Job* jobs_list, in
                 handle_jobs_cmd(segments[i]->argv, jobs_list);
                 exit(0);
             }
+            else if (strcmp(command, "complete") == 0) {
+                handle_complete_cmd(segments[i]->argv);
+                exit(0);
+            }
             else {
                 char* exePath = find_exe_in_path(command);
                 if (exePath != NULL) {
@@ -1798,7 +1808,8 @@ int main() {
                 strcmp(command, "pwd") == 0 ||
                 strcmp(command, "cd") == 0 ||
                 strcmp(command, "history") == 0 ||
-                strcmp(command, "jobs") == 0
+                strcmp(command, "jobs") == 0 ||
+                strcmp(command, "complete") == 0
             ) {
                 if (parsed_result->redir_info->has_stdout_redirect) {
                     saved_stdout = setup_stdout_redirection(parsed_result->redir_info->stdout_file, parsed_result->redir_info->stdout_mode);
@@ -1824,6 +1835,9 @@ int main() {
                 } else if (strcmp(command, "jobs") == 0) {
                     reap_background_jobs(jobs_list);
                     handle_jobs_cmd(parsed_result->argv, jobs_list);
+                }
+                else if (strcmp(command, "complete") == 0) {
+                    handle_complete_cmd(parsed_result->argv);
                 }
 
                 if (saved_stdout != -1) restore_stdout(saved_stdout);
