@@ -1027,6 +1027,59 @@ int find_completion_index(CompletionSystem* sys, const char* command) {
     return -1;
 }
 
+// Helper function to register context and retrieve it when needed
+CompletionSystem* get_set_completion_context(CompletionSystem* new_sys) {
+    static CompletionSystem* saved_sys = NULL;
+    if (new_sys != NULL) {
+        saved_sys = new_sys;
+    }
+    return saved_sys;
+}
+
+// Helper function which generates custom completion scripts registered
+char* script_completion_generator(const char* text, int state) {
+    CompletionSystem* sys = get_set_completion_context(NULL);
+
+    if (state != 0 || sys == NULL) {
+        return NULL;
+    }
+
+    char line_copy[BUF_SIZE];
+    strncpy(line_copy, rl_line_buffer, sizeof(line_copy) - 1);
+    line_copy[sizeof(line_copy) - 1] = '\0';
+
+    char* cmd_name = strtok(line_copy, " \t");
+    if (!cmd_name) {
+        return NULL;
+    }
+
+    int idx = find_completion_index(sys, cmd_name);
+    if (idx == -1) {
+        return NULL;
+    }
+    
+    const char* script_path = sys->list[idx].completer;
+
+    FILE* fp = popen(script_path, "r");
+    if (!fp) {
+        perror("popen failed running completer");
+        return NULL;
+    }
+
+    char output_line[BUF_SIZE];
+    if (fgets(output_line, sizeof(output_line), fp) != NULL) {
+        size_t len = strlen(output_line);
+        if (len > 0 && output_line[len - 1] == '\n') {
+            output_line[len - 1] = '\0';
+        }
+        pclose(fp);
+        return strdup(output_line);
+    }
+
+    pclose(fp);
+    return NULL;
+}
+
 // Helper function to handle `complete` commands
 void handle_complete_cmd(char** argv, CompletionSystem* sys) {
     if (argv == NULL || argv[0] == NULL || sys == NULL) {
@@ -1444,7 +1497,23 @@ char** builtin_completion(const char* text, int start, int end) {
         return rl_completion_matches(text, command_generator);
     }
     else {
-        // User is completing an argument (filename in current directory)
+        // User is completing an argument
+        CompletionSystem* sys = get_set_completion_context(NULL);
+
+        char line_copy[BUF_SIZE];
+        strncpy(line_copy, rl_line_buffer, sizeof(line_copy) - 1);
+        line_copy[sizeof(line_copy) - 1] = '\0';
+
+        char* cmd_name = strtok(line_copy, " \t");
+        if (cmd_name && sys && find_completion_index(sys, cmd_name) != -1) {
+            rl_attempted_completion_over = 1;
+            rl_completion_append_character = ' ';
+
+            // Override entry function to route directly to local-state generator
+            return rl_completion_matches(text, script_completion_generator);
+        }
+
+        // Fallback to default file/directory behavior if no custom script is registered
         rl_attempted_completion_over = 0;
         return rl_completion_matches(text, filename_generator);
     }
@@ -1714,6 +1783,9 @@ int main() {
     // Set up completion function
     rl_attempted_completion_function = builtin_completion;
     rl_completion_append_character = ' ';
+
+    // Securely pass local comp_sys stack address to Readline's engine context
+    get_set_completion_context(&comp_sys);
 
     // Load history from HISTFILE if set
     char* histfile = getenv("HISTFILE");
