@@ -1265,6 +1265,73 @@ int is_valid_var_identifier(const char* name) {
     return 1; // Valid shell variable identifier
 }
 
+// Helper function to perform parameter expansion and word splitting on tokens
+char** expand_parameters(char** original_tokens, VariableSystem* var_sys) {
+    if (original_tokens == NULL) {
+        return NULL;
+    }
+
+    // Allocate space for the new expanded token list
+    char** expanded_argv = malloc(MAX_ARGS * sizeof(char*));
+    int new_argc = 0;
+
+    for (int i = 0; original_tokens[i] != NULL; i++) {
+        char* token = original_tokens[i];
+        
+        // Dynamic buffer to stitch together fragments of this token
+        char temp_buffer[BUF_SIZE * 2];
+        temp_buffer[0] = '\0';
+
+        int src_idx = 0;
+        int altered = 0;
+
+        while (token[src_idx] != '\0') {
+            if (token[src_idx] == '$' && token[src_idx + 1] != '\0' && token[src_idx + 1] != ' ') {
+                altered = 1;
+                src_idx++; // Move past '$'
+
+                // Extract variable name safely up to non-alphanumeric/underscore bounds
+                char var_name[BUF_SIZE];
+                int v_len = 0;
+                while (token[src_idx] != '\0' && (isalnum((unsigned char)token[src_idx]) || token[src_idx] == '_')) {
+                    var_name[v_len++] = token[src_idx++];
+                }
+                var_name[v_len] = '\0';
+
+
+                // Look up value
+                int idx = find_variable_index(var_sys, var_name);
+                if (idx != -1) {
+                    strcat(temp_buffer, var_sys->list[idx].value);
+                }
+            } else {
+                // Keep literal character
+                int curr_len = strlen(temp_buffer);
+                temp_buffer[curr_len] = token[src_idx++];
+                temp_buffer[curr_len + 1] = '\0';
+            }
+        }
+
+        if (altered) {
+            // Word split the expanded string by spaces/tabs
+            char* sub_token = strtok(temp_buffer, " \t\n");
+            while (sub_token != NULL) {
+                if (new_argc < MAX_ARGS - 1) {
+                    expanded_argv[new_argc++] = strdup(sub_token);
+                }
+                sub_token = strtok(NULL, " \t\n");
+            }
+        } else {
+            if (new_argc < MAX_ARGS - 1) {
+                expanded_argv[new_argc++] = strdup(token);
+            }
+        }
+    }
+
+    expanded_argv[new_argc] = NULL; // Null terminate the new array
+    return expanded_argv;
+}
+
 // Helper function to handle `declare` commands
 void handle_declare_cmd(char** argv, VariableSystem* var_sys) {
     if (argv == NULL || argv[0] == NULL || var_sys ==  NULL) {
@@ -2038,6 +2105,11 @@ int main() {
             continue;
         }
 
+        // Parameter expansion
+        char** expanded_tokens = expand_parameters(tokens, &var_sys);
+        free_argv(tokens);        // Free unexpanded raw strings
+        tokens = expanded_tokens;  // Work with expanded values going forward
+
         // Check for pipeline operator
         int has_pipe = 0;
         for (int i = 0; tokens[i] != NULL; i++) {
@@ -2136,11 +2208,76 @@ int main() {
             free_argv(tokens);
         } else {
             // Non-pipeline command
-            ParseResult* parsed_result = parse_args_with_redirection(processedInput);
-            if (parsed_result == NULL) {
-                free(input);
-                free_argv(tokens);
-                continue;
+            ParseResult* parsed_result = malloc(sizeof(ParseResult));
+            parsed_result->redir_info = init_redirection_info();
+
+            // Re-allocate to copy tokens across securely
+            int token_count = 0;
+            while (tokens[token_count] != NULL) {
+                token_count++;
+            }
+
+            parsed_result->argv = malloc((token_count + 1) * sizeof(char*));
+            for (int i = 0; i < token_count; i++) {
+                parsed_result->argv[i] = strdup(tokens[i]);
+            }
+            parsed_result->argv[token_count] = NULL;
+            parsed_result->is_background_process = 0;
+
+            // Handle background tracking character adjustment manually
+            if (token_count > 0 && strcmp(parsed_result->argv[token_count - 1], "&") == 0) {
+                parsed_result->is_background_process = 1;
+                free(parsed_result->argv[token_count - 1]);
+                parsed_result->argv[token_count - 1] = NULL;
+                token_count--;
+            }
+
+            // Extract non-pipeline redirection markers explicitly from our argv space
+            int redirect_stdout_idx = -1;
+            int redirect_stderr_idx = -1;
+
+            for (int j = 0; j < token_count; j++) {
+                if (parsed_result->argv[j] == NULL) continue;
+                if (strcmp(parsed_result->argv[j], ">") == 0 || strcmp(parsed_result->argv[j], "1>") == 0) {
+                    redirect_stdout_idx = j;
+                    parsed_result->redir_info->stdout_mode = 0;
+                } else if (strcmp(parsed_result->argv[j], ">>") == 0 || strcmp(parsed_result->argv[j], "1>>") == 0) {
+                    redirect_stdout_idx = j;
+                    parsed_result->redir_info->stdout_mode = 1;
+                } else if (strcmp(parsed_result->argv[j], "2>") == 0) {
+                    redirect_stderr_idx = j;
+                    parsed_result->redir_info->stderr_mode = 0;
+                } else if (strcmp(parsed_result->argv[j], "2>>") == 0) {
+                    redirect_stderr_idx = j;
+                    parsed_result->redir_info->stderr_mode = 1;
+                }
+            }
+
+            if (redirect_stdout_idx != -1 && parsed_result->argv[redirect_stdout_idx + 1] != NULL) {
+                parsed_result->redir_info->has_stdout_redirect = 1;
+                parsed_result->redir_info->stdout_file = strdup(parsed_result->argv[redirect_stdout_idx + 1]);
+                free(parsed_result->argv[redirect_stdout_idx]);
+                parsed_result->argv[redirect_stdout_idx] = NULL;
+                free(parsed_result->argv[redirect_stdout_idx + 1]);
+                parsed_result->argv[redirect_stdout_idx + 1] = NULL;
+
+                // Shift subsequent tokens to fill gaps
+                for (int x = redirect_stdout_idx; parsed_result->argv[x+2] != NULL || parsed_result->argv[x+1] != NULL; x++) {
+                    parsed_result->argv[x] = parsed_result->argv[x+2];
+                }
+            }
+
+            if (redirect_stderr_idx != -1 && parsed_result->argv[redirect_stderr_idx + 1] != NULL) {
+                parsed_result->redir_info->has_stderr_redirect = 1;
+                parsed_result->redir_info->stderr_file = strdup(parsed_result->argv[redirect_stderr_idx + 1]);
+                free(parsed_result->argv[redirect_stderr_idx]);
+                parsed_result->argv[redirect_stderr_idx] = NULL;
+                free(parsed_result->argv[redirect_stderr_idx + 1]);
+                parsed_result->argv[redirect_stderr_idx + 1] = NULL;
+                
+                for (int x = redirect_stderr_idx; parsed_result->argv[x+2] != NULL || parsed_result->argv[x+1] != NULL; x++) {
+                    parsed_result->argv[x] = parsed_result->argv[x+2];
+                }
             }
 
             if (parsed_result->argv[0] == NULL) {
