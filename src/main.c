@@ -1241,6 +1241,30 @@ int find_variable_index(VariableSystem* var_sys, const char* variable) {
     return -1;
 }
 
+// Helper function to validate shell variable identifiers
+int is_valid_var_identifier(const char* name) {
+    // Invalid shell identifier if variable identifier is empty
+    if (name == NULL || *name == '\0') {
+        return 0;
+    }
+
+    // Rule 1: Must start with a letter (a-z, A-Z) or an underscore
+    if (!isalpha((unsigned char)*name) && *name != '_') {
+        return 0;
+    }
+
+    // Rule 2: Remaining characters must be alphanumeric or underscores
+    name++;
+    while (*name != '\0') {
+        if (!isalnum((unsigned char)*name) && *name != '_') {
+            return 0;
+        }
+        name++;
+    }
+
+    return 1; // Valid shell variable identifier
+}
+
 // Helper function to handle `declare` commands
 void handle_declare_cmd(char** argv, VariableSystem* var_sys) {
     if (argv == NULL || argv[0] == NULL || var_sys ==  NULL) {
@@ -1270,6 +1294,14 @@ void handle_declare_cmd(char** argv, VariableSystem* var_sys) {
             *eq_sign = '\0';
             char* var_name = argv[1];
             char* var_value = eq_sign + 1;
+
+            // Validate shell variable identifier before saving
+            if (!is_valid_var_identifier(var_name)) {
+                // Restore '=' momentarily to print original input in error message
+                *eq_sign = '=';
+                fprintf(stderr, "declare: `%s': not a valid identifier\n", argv[1]);
+                return;
+            }
 
             // Check if the variable already exists
             int idx = find_variable_index(var_sys, var_name);
