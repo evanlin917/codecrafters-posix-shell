@@ -1286,6 +1286,7 @@ char** expand_parameters(char** original_tokens, VariableSystem* var_sys) {
         int altered = 0;
 
         while (token[src_idx] != '\0') {
+            // Check for the start of parameter expansion
             if (token[src_idx] == '$' && token[src_idx + 1] != '\0' && token[src_idx + 1] != ' ') {
                 altered = 1;
                 src_idx++; // Move past '$'
@@ -1293,22 +1294,54 @@ char** expand_parameters(char** original_tokens, VariableSystem* var_sys) {
                 // Extract variable name safely up to non-alphanumeric/underscore bounds
                 char var_name[BUF_SIZE];
                 int v_len = 0;
-                while (token[src_idx] != '\0' && (isalnum((unsigned char)token[src_idx]) || token[src_idx] == '_')) {
-                    var_name[v_len++] = token[src_idx++];
+                int is_braced = 0;
+
+                // Case 1: Braced expansion {VAR}
+                if (token[src_idx] == '{') {
+                    is_braced = 1;
+                    src_idx++; // Move past '{'
+
+                    // Read characters until closing brace '}' or end of string
+                    while (token[src_idx] != '\0' && token[src_idx] != '}') {
+                        if (v_len < BUF_SIZE - 1) {
+                            var_name[v_len++] = token[src_idx];
+                        }
+
+                        src_idx++;
+                    }
+
+                    var_name[v_len] = '\0';
+
+                    if (token[src_idx] == '}') {
+                        src_idx++; // Consume closing brace '}'
+                    }
                 }
-                var_name[v_len] = '\0';
+                // Case 2: Standard expansion $VAR
+                else {
+                    // Extract variable name safely up to non-alphanumeric/underscore bounds
+                    while (token[src_idx] != '\0' && (isalnum((unsigned char)token[src_idx]) || token[src_idx] == '_')) {
+                        if (v_len < BUF_SIZE - 1) {
+                            var_name[v_len++] = token[src_idx];
+                        }
 
-
-                // Look up value
+                        src_idx++;
+                    }
+                    var_name[v_len] = '\0';
+                }
+                // Look up value in variable tracker system
                 int idx = find_variable_index(var_sys, var_name);
                 if (idx != -1) {
                     strcat(temp_buffer, var_sys->list[idx].value);
-                }
+                } 
             } else {
                 // Keep literal character
                 int curr_len = strlen(temp_buffer);
-                temp_buffer[curr_len] = token[src_idx++];
-                temp_buffer[curr_len + 1] = '\0';
+                if (curr_len < (BUF_SIZE * 2) - 1) {
+                    temp_buffer[curr_len] = token[src_idx++];
+                    temp_buffer[curr_len + 1] = '\0';
+                } else {
+                    src_idx++;
+                }
             }
         }
 
