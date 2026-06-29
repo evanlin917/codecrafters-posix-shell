@@ -1256,9 +1256,41 @@ void handle_declare_cmd(char** argv, VariableSystem* var_sys) {
 
         int idx = find_variable_index(var_sys, argv[2]);
         if (idx != -1) {
-            printf("declare %s=\"%s\"\n", var_sys->list[idx].name, var_sys->list[idx].value);
+            printf("declare -- %s=\"%s\"\n", var_sys->list[idx].name, var_sys->list[idx].value);
         } else {
             fprintf(stderr, "declare: %s: not found\n", argv[2]);
+        }
+    }
+
+    if (argv[1] != NULL) {
+        char* eq_sign = strchr(argv[1], '=');
+
+        if (eq_sign != NULL) {
+            // Split the token into name and value
+            *eq_sign = '\0';
+            char* var_name = argv[1];
+            char* var_value = eq_sign + 1;
+
+            // Check if the variable already exists
+            int idx = find_variable_index(var_sys, var_name);
+
+            if (idx != -1) {
+                // Update existing variable
+                free(var_sys->list[idx].value);
+                var_sys->list[idx].value = strdup(var_value);
+            } else {
+                // Insert a brand new variable if there is space
+                if (var_sys->count < MAX_VARS) {
+                    var_sys->list[var_sys->count].name = strdup(var_name);
+                    var_sys->list[var_sys->count].value = strdup(var_value);
+                    var_sys->count++;
+                } else {
+                    fprintf(stderr, "declare: variable storage is full\n");
+                }
+            }
+
+            // Restore the '=' symbol in argv
+            *eq_sign = '=';
         }
     }
 }
