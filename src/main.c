@@ -16,6 +16,7 @@
 #define ARG_SIZE 64
 #define MAX_JOBS 100
 #define MAX_COMPLETIONS 64
+#define MAX_VARS 100
 
 // Define built-in commands for completion
 const char* builtins[] = {
@@ -73,6 +74,18 @@ typedef struct {
     int count;
 } CompletionSystem;
 
+// Structure defining shell variables
+typedef struct {
+    char* name;
+    char* value;
+} ShellVariable;
+
+// Structure tracking list of current shell variables maintained
+typedef struct {
+    ShellVariable list[MAX_VARS];
+    int count;
+} VariableSystem;
+
 // Helper function to initialize job lists
 void init_jobs_system(Job* list) {
     for (int i = 0; i < MAX_JOBS; i++) {
@@ -89,6 +102,15 @@ void init_completion_system(CompletionSystem* sys) {
     for (int i = 0; i < MAX_COMPLETIONS; i++) {
         sys->list[i].command = NULL;
         sys->list[i].completer = NULL;
+    }
+}
+
+// Helper function to initialize shell variable tracking system
+void init_variable_system(VariableSystem* sys) {
+    sys->count = 0;
+    for (int i = 0; i < MAX_VARS; i++) {
+        sys->list[i].name = NULL;
+        sys->list[i].value = NULL;
     }
 }
 
@@ -1017,7 +1039,7 @@ void handle_jobs_cmd(char** argv, Job* list) {
     }
 }
 
-// Helper function to look pu an existing command in registry
+// Helper function to look up an existing command in registry
 int find_completion_index(CompletionSystem* sys, const char* command) {
     for (int i = 0; i < sys->count; i++) {
         if (sys->list[i].command != NULL && strcmp(sys->list[i].command, command) == 0) {
@@ -1208,9 +1230,37 @@ void handle_complete_cmd(char** argv, CompletionSystem* sys) {
     }
 }
 
+// Helper function to look up an existing shell variable
+int find_variable_index(VariableSystem* var_sys, const char* variable) {
+    for (int i = 0; i < var_sys->count; i++) {
+        if (var_sys->list[i].name != NULL && strcmp(var_sys->list[i].name, variable) == 0) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
 // Helper function to handle `declare` commands
-void handle_declare_cmd(char** argv) {
-    (void)argv;
+void handle_declare_cmd(char** argv, VariableSystem* var_sys) {
+    if (argv == NULL || argv[0] == NULL || var_sys ==  NULL) {
+        return;
+    }
+
+    if (argv[1] != NULL && strcmp(argv[1], "-p") == 0) {
+        // The -p Flag: Prints out description of variable
+        if (argv[2] == NULL) {
+            fprintf(stderr, "declare: usage: declare [-p] [variable]\n");
+            return;
+        }
+
+        int idx = find_variable_index(var_sys, argv[2]);
+        if (idx != -1) {
+            printf("declare %s=\"%s\"\n", var_sys->list[idx].name, var_sys->list[idx].value);
+        } else {
+            fprintf(stderr, "declare: %s: not found\n", argv[2]);
+        }
+    }
 }
 
 // Helper function to find if executable exists in PATH
@@ -1642,7 +1692,7 @@ char*** split_tokens_by_pipe(char** tokens, int* n_segments) {
 }
 
 // Execute a pipeline of commands
-void execute_pipeline(ParseResult** segments, int n_segments, Job* jobs_list, int is_background_process, CompletionSystem* comp_sys) {
+void execute_pipeline(ParseResult** segments, int n_segments, Job* jobs_list, int is_background_process, CompletionSystem* comp_sys, VariableSystem* var_sys) {
     int prev_pipe[2] = {-1, -1};
     int next_pipe[2] = {-1, -1};
     pid_t* pids = malloc(n_segments * sizeof(pid_t));
@@ -1730,7 +1780,7 @@ void execute_pipeline(ParseResult** segments, int n_segments, Job* jobs_list, in
                 exit(0);
             }
             else if (strcmp(command, "declare") == 0) {
-                handle_declare_cmd(segments[i]->argv);
+                handle_declare_cmd(segments[i]->argv, var_sys);
             }
             else {
                 char* exePath = find_exe_in_path(command);
@@ -1865,6 +1915,10 @@ int main() {
     // Initialize completion tracking system
     CompletionSystem comp_sys;
     init_completion_system(&comp_sys);
+
+    // Initialize shell variable tracking system
+    VariableSystem var_sys;
+    init_variable_system(&var_sys);
 
     // Initialize readline
     rl_readline_name = "myshell";
@@ -2005,7 +2059,7 @@ int main() {
             }
             
             // Execute the pipeline
-            execute_pipeline(segment_results, n_segments, jobs_list, pipeline_is_background, &comp_sys);
+            execute_pipeline(segment_results, n_segments, jobs_list, pipeline_is_background, &comp_sys, &var_sys);
             
             // Clean up
             for (int i = 0; i < n_segments; i++) {
@@ -2081,7 +2135,7 @@ int main() {
                     handle_complete_cmd(parsed_result->argv, &comp_sys);
                 }
                 else if (strcmp(command, "declare") == 0) {
-                    handle_declare_cmd(parsed_result->argv);
+                    handle_declare_cmd(parsed_result->argv, &var_sys);
                 }
 
                 if (saved_stdout != -1) restore_stdout(saved_stdout);
