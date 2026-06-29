@@ -742,7 +742,8 @@ void handle_type_cmd(char** argv) { // Now takes char** argv
             (strcmp(cmd_to_type, "cd") == 0) ||
             (strcmp(cmd_to_type, "history") == 0) ||
             (strcmp(cmd_to_type, "jobs") == 0) ||
-            (strcmp(cmd_to_type, "complete") == 0)
+            (strcmp(cmd_to_type, "complete") == 0) ||
+            (strcmp(cmd_to_type, "declare") == 0)
         ) {
             printf("%s is a shell builtin\n", cmd_to_type);
             continue; // Check next argument
@@ -1205,6 +1206,11 @@ void handle_complete_cmd(char** argv, CompletionSystem* sys) {
             }
         }
     }
+}
+
+// Helper function to handle `declare` commands
+void handle_declare_cmd(char** argv) {
+    (void)argv;
 }
 
 // Helper function to find if executable exists in PATH
@@ -1723,6 +1729,9 @@ void execute_pipeline(ParseResult** segments, int n_segments, Job* jobs_list, in
                 handle_complete_cmd(segments[i]->argv, comp_sys);
                 exit(0);
             }
+            else if (strcmp(command, "declare") == 0) {
+                handle_declare_cmd(segments[i]->argv);
+            }
             else {
                 char* exePath = find_exe_in_path(command);
                 if (exePath != NULL) {
@@ -2040,7 +2049,8 @@ int main() {
                 strcmp(command, "cd") == 0 ||
                 strcmp(command, "history") == 0 ||
                 strcmp(command, "jobs") == 0 ||
-                strcmp(command, "complete") == 0
+                strcmp(command, "complete") == 0 ||
+                strcmp(command, "declare") == 0
             ) {
                 if (parsed_result->redir_info->has_stdout_redirect) {
                     saved_stdout = setup_stdout_redirection(parsed_result->redir_info->stdout_file, parsed_result->redir_info->stdout_mode);
@@ -2069,6 +2079,9 @@ int main() {
                 }
                 else if (strcmp(command, "complete") == 0) {
                     handle_complete_cmd(parsed_result->argv, &comp_sys);
+                }
+                else if (strcmp(command, "declare") == 0) {
+                    handle_declare_cmd(parsed_result->argv);
                 }
 
                 if (saved_stdout != -1) restore_stdout(saved_stdout);
